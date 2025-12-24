@@ -1,0 +1,289 @@
+#!/bin/bash
+
+IGNORE_CASE=0
+USE_REGEX=0
+EXACT_ID=0
+INVERT_MATCH=0
+NAMES_ONLY=0
+COUNT_ONLY=0
+LIST_FILE=""
+
+##################
+# HELP FUNCTIONS #
+##################
+
+show_help() {
+    cmd=$(basename "$0")
+    echo "Usage:"
+    echo "  Standard:  $cmd [OPTIONS] <search_pattern> [fasta_file]"
+    echo "  List Mode: $cmd [OPTIONS] -l <list_file> [fasta_file]"
+    echo
+    echo "Options:"
+    echo "  -l FILE  List mode: Read search patterns from FILE (one per line)"
+    echo "  -i       Case-insensitive search (applies to regex, exact, and list)"
+    echo "  -r       Treat search pattern as a Regular Expression"
+    echo "  -x       Exact match on Sequence ID only (ignore description)"
+    echo "  -v       Invert match (extract sequences that do NOT match)"
+    echo "  -n       Names only (print headers only, no sequences)"
+    echo "  -c       Count only (print number of matches)"
+    echo "  -m       Show extended manual (examples & logic)"
+    echo "  -h       Show this help message"
+    echo
+    echo "Quick Examples:"
+    echo "  $cmd -i 'chromosome' data.fa        # Case-insensitive substring"
+    echo "  $cmd -l ids.txt data.fa             # Extract using patterns in file"
+    echo "  $cmd -r '(chr1|chr2)$' data.fa      # Regex OR (matches chr1 or chr2)"
+}
+
+show_manual() {
+    echo "--- $(basename "$0") EXTENDED MANUAL ---"
+    echo
+    echo "1. EXAMPLE COMBINATIONS"
+    echo "   - Case-Insensitive Regex (-i -r):"
+    echo "     $ $(basename "$0") -i -r '^mitochondria' genome.fa"
+    echo "     Matches 'Mitochondria', 'MITOCHONDRIA', etc., at the start of the line."
+    echo
+    echo "   - Count Exact Matches (-c -x):"
+    echo "     $ $(basename "$0") -c -x 'chr1' genome.fa"
+    echo "     Returns a single number. Matches '>chr1' but NOT '>chr10' or '>chr1 desc'."
+    echo
+    echo "   - Invert List Match (-v -l):"
+    echo "     $ $(basename "$0") -v -l bad_contigs.txt genome.fa"
+    echo "     Extracts everything EXCEPT sequences matching patterns in 'bad_contigs.txt'."
+    echo
+    echo "2. LIST MODE (-l)"
+    echo "   List mode treats each line as a separate search pattern."
+    echo "   It respects all other flags (-i, -r, -x) just like standard mode."
+    echo "   A sequence matches if ANY pattern in the list matches (OR logic)."
+    echo
+    echo "   Examples:"
+    echo "     $ $(basename "$0") -l patterns.txt genome.fa"
+    echo "     $ $(basename "$0") -i -l patterns.txt genome.fa    # Case-insensitive"
+    echo "     $ $(basename "$0") -x -l ids.txt genome.fa         # Exact ID matching"
+    echo
+    echo "3. LIST FILE FORMAT (-l)"
+    echo "   - Plain text, one pattern per line."
+    echo "   - Empty lines and lines starting with '#' are ignored."
+    echo "   - Trailing spaces are automatically trimmed."
+    echo
+    echo "4. REGEX OR OPERATOR (Alternative to Lists)"
+    echo "   If you only have a few patterns, you don't need a list file."
+    echo "   Use the regex pipe '|' to match multiple items:"
+    echo "     $ $(basename "$0") -r '(chr1|chrX|chrY)' genome.fa"
+    echo "     $ $(basename "$0") -r 'contig_[0-9]+' genome.fa"
+    echo
+    exit 0
+}
+
+####################
+# ARGUMENT PARSING #
+####################
+
+while getopts "irxvnhcml:" opt; do
+    case "$opt" in
+        i) IGNORE_CASE=1 ;;
+        r) USE_REGEX=1 ;;
+        x) EXACT_ID=1 ;;
+        v) INVERT_MATCH=1 ;;
+        n) NAMES_ONLY=1 ;;
+        c) COUNT_ONLY=1 ;;
+        l) LIST_FILE="$OPTARG" ;;
+        m) show_manual ;;
+        h) show_help; exit 0 ;;
+        *) show_help >&2; exit 1 ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+######################################
+# INPUT VALIDATION & LOGIC BRANCHING #
+###################################### 
+
+if [ -n "$LIST_FILE" ]; then
+    # --- LIST MODE ---
+    # We do NOT expect a search pattern argument here, only the FASTA file
+    
+    if [ ! -f "$LIST_FILE" ]; then
+        echo "Error: List file '$LIST_FILE' not found" >&2
+        exit 1
+    fi
+
+    # In list mode, $1 is the fasta file (optional, defaults to stdin)
+    SEARCH_PATTERN="" 
+    INPUT_FILE="${1:--}"
+    
+    # Check if user accidentally provided too many args
+    if [ $# -gt 1 ]; then
+        echo "Error: Too many arguments for List Mode." >&2
+        echo "Usage: $(basename "$0") -l list.txt [fasta_file]" >&2
+        exit 1
+    fi
+
+else
+    # --- STANDARD MODE ---
+    # We expect: <search_pattern> [fasta_file]
+    
+    if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+        echo "Error: Missing search pattern." >&2
+        show_help >&2
+        exit 1
+    fi
+
+    SEARCH_PATTERN="$1"
+    INPUT_FILE="${2:--}"
+
+    if [ -z "$SEARCH_PATTERN" ]; then
+        echo "Error: Search pattern cannot be empty" >&2
+        exit 1
+    fi
+fi
+
+if [ "$INPUT_FILE" != "-" ] && [ ! -f "$INPUT_FILE" ]; then
+    echo "Error: Input file '$INPUT_FILE' not found" >&2
+    exit 1
+fi
+
+##################
+# MAIN EXECUTION #
+##################
+
+awk -v pattern="$SEARCH_PATTERN" \
+    -v list_file="$LIST_FILE" \
+    -v ignore_case="$IGNORE_CASE" \
+    -v use_regex="$USE_REGEX" \
+    -v exact_id="$EXACT_ID" \
+    -v invert="$INVERT_MATCH" \
+    -v names_only="$NAMES_ONLY" \
+    -v count_mode="$COUNT_ONLY" '
+
+    BEGIN { 
+        match_count = 0 
+        
+        # Load List File if specified
+        if (list_file != "") {
+            pattern_count = 0
+            while ((getline line < list_file) > 0) {
+                # Strip comments (#) and trim whitespace
+                gsub(/#.*/, "", line)
+                gsub(/^[ \t]+|[ \t]+$/, "", line)
+                
+                # Store non-empty lines as patterns
+                if (line != "") {
+                    patterns[++pattern_count] = line
+                }
+            }
+            close(list_file)
+        }
+    }
+
+    /^>/ {
+        # Reset print flag for new record
+        print_record = 0
+        
+        # 1. Prepare Target
+        full_header = substr($0, 2)
+        
+        # Default target is full header
+        target = full_header
+        
+        # If -x (exact ID mode), extract only the ID part
+        if (exact_id) {
+            split(full_header, parts, " ")
+            target = parts[1]
+        } 
+
+        # 2. Matching Logic
+        matched = 0
+        
+        if (list_file != "") {
+            # List Mode: Check against all patterns
+            for (i = 1; i <= pattern_count; i++) {
+                check_target = target
+                check_query = patterns[i]
+                
+                # Apply case insensitivity
+                if (ignore_case) {
+                    check_target = tolower(check_target)
+                    check_query = tolower(check_query)
+                }
+                
+                # Apply matching logic
+                if (use_regex) {
+                    if (check_target ~ check_query) {
+                        matched = 1
+                        break
+                    }
+                } else {
+                    if (exact_id) {
+                        if (check_target == check_query) {
+                            matched = 1
+                            break
+                        }
+                    } else {
+                        if (index(check_target, check_query) > 0) {
+                            matched = 1
+                            break
+                        }
+                    }
+                }
+            }
+            
+        } else {
+            # Standard Mode: Single pattern
+            check_target = target
+            check_query = pattern
+            
+            # Apply case insensitivity
+            if (ignore_case) {
+                check_target = tolower(check_target)
+                check_query = tolower(check_query)
+            }
+            
+            # Apply matching logic
+            if (use_regex) {
+                if (check_target ~ check_query) matched = 1
+            } else {
+                if (exact_id) {
+                    if (check_target == check_query) matched = 1
+                } else {
+                    if (index(check_target, check_query) > 0) matched = 1
+                }
+            }
+        }
+
+        # 3. Invert
+        if (invert) matched = !matched
+
+        # 4. Output Logic
+        if (matched) {
+            match_count++
+            
+            if (count_mode) {
+                # Just count, do nothing else
+            } else if (names_only) {
+                print $0 
+            } else {
+                print $0 
+                print_record = 1 
+            }
+        }
+    }
+
+    # Print sequence lines (non-headers) if flag is set
+    !/^>/ && print_record { print }
+
+    # End block for counting
+    END {
+        if (count_mode) {
+            print match_count
+        }
+        # Optional: Warn if no matches found (except in count/invert modes where 0 is valid)
+        if (match_count == 0 && count_mode == 0 && invert == 0) {
+            print "Warning: No sequences matched the search criteria." > "/dev/stderr"
+        }
+    }
+
+' "$INPUT_FILE"
+
+exit 0

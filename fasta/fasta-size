@@ -1,0 +1,96 @@
+#!/bin/bash
+
+show_help() {
+  cat << EOF
+Calculates and displays the size (in base pairs) for each provided FASTA file.
+
+Usage: $(basename "$0") [OPTIONS] file1.fasta [file2.fasta ...]
+
+Options:
+  -h, --help    Show this help message
+
+Output:
+  - Single file:    prints only the size number
+  - Multiple files: prints "filename: size" for each file
+
+Examples:
+  Single file:
+    $(basename "$0") genome.fasta
+    Output: 3141592
+
+  Multiple files:
+    $(basename "$0") genome1.fasta genome2.fasta
+    Output: genome1.fasta: 3141592
+            genome2.fasta: 2718281
+
+  Works with stdin:
+    cat genome.fasta | $(basename "$0")
+EOF
+}
+
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo "Error: Unknown option '$1'" >&2
+      show_help >&2
+      exit 1
+      ;;
+    *)
+      FILES+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# If no files provided, check if stdin has data
+if [ "${#FILES[@]}" -eq 0 ]; then
+  if [ -t 0 ]; then
+    # stdin is a terminal (no piped data)
+    echo "Error: No input files specified." >&2
+    show_help >&2
+    exit 1
+  else
+    # stdin has piped data
+    FILES=("/dev/stdin")
+  fi
+fi
+
+# Determine if we're processing multiple files
+SHOW_FILENAME=false
+if [ "${#FILES[@]}" -gt 1 ]; then
+  SHOW_FILENAME=true
+fi
+
+for file in "${FILES[@]}"; do
+  if [ ! -f "$file" ] && [ "$file" != "/dev/stdin" ]; then
+    echo "Error: File '$file' not found or is not a regular file." >&2
+    continue
+  fi
+  
+  # 1. /^>/ { next } : If the line starts with '>', skip to the next line (it's a FASTA header).
+  # 2. { total += length($0) } : For all other lines (sequence data), add the length of the line to 'total'.
+  # 3. END { ... } : Executes after all lines are processed.
+  # 4. print total : Prints the final count.
+  size=$(awk '/^>/ { next } { total += length($0) } END { print total+0 }' "$file")
+  
+  # Check if we got a valid number
+  if [[ ! "$size" =~ ^[0-9]+$ ]]; then
+    echo "Error: Could not calculate size for '$file'." >&2
+    continue
+  fi
+  
+  # Output based on number of files
+  if [ "$SHOW_FILENAME" = true ]; then
+    printf "%s: %s\n" "$file" "$size"
+  else
+    printf "%s\n" "$size"
+  fi
+done
+
+exit 0
