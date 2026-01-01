@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+
+import argparse
+import bz2
+import gzip
+import re
+import sys
+
+
+def open_maybe_zipped(path, mode="rt"):
+    if path.endswith(".gz"):
+        return gzip.open(path, mode)
+    elif path.endswith(".bz2"):
+        return bz2.open(path, mode)
+    return open(path, mode)
+
+
+def clean_id(identifier):
+    """Strips NCBI prefixes like lcl| or gnl| for matching."""
+    if "|" in identifier:
+        return identifier.split("|")[-1]
+    return identifier
+
+
+def parse_location(loc):
+    """Parses GenBank locations into GFF coordinates and strand."""
+    strand = "-" if "complement" in loc else "+"
+    core = loc.replace("complement(", "").replace("join(", "")
+    while core.endswith(")"): core = core[:-1]
+    
+    parts = []
+    for segment in core.split(","):
+        nums = re.findall(r"\d+", segment)
+        if len(nums) >= 2:
+            parts.append((nums[0], nums[-1], strand))
+        elif len(nums) == 1:
+            parts.append((nums[0], nums[0], strand))
+    return parts
+
+
+def format_gff_attrs(feat_type, attrs):
+    """Format and clean attributes for GFF3 compatibility."""
+    gff_attrs = {}
+    
+    fid = attrs.get("locus_tag") or attrs.get("protein_id") or attrs.get("gene")
+    if fid:
+        # We use the type-ID format for uniqueness
+        gff_attrs["ID"] = f"{feat_type.lower()}-{fid}"
+        if "locus_tag" in attrs:
+            gff_attrs["locus_tag"] = attrs["locus_tag"]
+
+    fname = attrs.get("gene", fid)
+    if fname:
+        gff_attrs["Name"] = fname
+
+    # Consolidation of GO terms
+    go_terms = []
+    for k, v in attrs.items():
+        if k.lower().startswith("go_"):
+            found = re.findall(r"GO:\d+", v)
+            go_terms.extend(found)
+    if go_terms:
+        gff_attrs["Ontology_term"] = ",".join(sorted(list(set(go_terms))))
+
+    for k in ["gene", "product", "protein_id", "note", "inference"]:
+        if k in attrs and k not in gff_attrs:
+            gff_attrs[k] = attrs[k]
+
+    if "translation" in attrs:
+        gff_attrs["translation"] = re.sub(r"\s+", "", attrs["translation"])
+
+    items = []
+    for k, v in gff_attrs.items():
+        safe_v = str(v).replace(";", "%3B").replace("=", "%3D").replace("&", "%26").replace(",", "%2C")
+        items.append(f"{k}={safe_v}")
+    
+    return ";".join(items)
+
+
+def parse_genbank(path):
+    """Generator yielding contig records from a GenBank file."""
+    with open_maybe_zipped(path, "rt") as fh:
+        record = {"seqid": None, "features": [], "sequence": []}
+        current_feat = None
+        current_qual = None
+        state = "HEADER"
+
+        for line in fh:
+            line = line.rstrip()
+            if not line: continue
+            if line.startswith("LOCUS"):
+                record["seqid"] = line.split()[1]
+            elif line.startswith("FEATURES"):
+                state = "FEATURES"
+            elif line.startswith("ORIGIN"):
+                state = "ORIGIN"
+            elif line.startswith("//"):
+                record["sequence"] = "".join(record["sequence"])
+                yield record
+                record = {"seqid": None, "features": [], "sequence": []}
+                state = "HEADER"
+            elif state == "FEATURES":
+                if line.startswith(" " * 5) and not line.startswith(" " * 21):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        current_feat = {"type": parts[0], "loc": parts[1], "attrs": {}}
+                        record["features"].append(current_feat)
+                        current_qual = None
+                elif line.startswith(" " * 21) and current_feat is not None:
+                    content = line.strip()
+                    if content.startswith("/"):
+                        if "=" in content:
+                            key, val = content[1:].split("=", 1)
+                            val = val.strip('"')
+                            current_feat["attrs"][key] = val
+                            current_qual = key
+                        else:
+                            current_feat["attrs"][content[1:]] = "true"
+                            current_qual = content[1:]
+                    elif current_qual:
+                        current_feat["attrs"][current_qual] += " " + content.strip('"')
+            elif state == "ORIGIN":
+                record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line))
+
+
+def genbank_to_gff(genbank_path, out):
+    records = list(parse_genbank(genbank_path))
+    out.write("##gff-version 3\n")
+    for rec in records:
+        out.write(f"##sequence-region {rec['seqid']} 1 {len(rec['sequence'])}\n")
+    for rec in records:
+        for feat in rec["features"]:
+            if feat["type"] == "source": continue
+            locs = parse_location(feat["loc"])
+            attr_str = format_gff_attrs(feat["type"], feat["attrs"])
+            for start, end, strand in locs:
+                out.write(f"{rec['seqid']}\tGenBank\t{feat['type']}\t{start}\t{end}\t.\t{strand}\t0\t{attr_str}\n")
+    out.write("##FASTA\n")
+    for rec in records:
+        out.write(f">{rec['seqid']}\n")
+        for i in range(0, len(rec['sequence']), 60):
+            out.write(rec['sequence'][i:i+60] + "\n")
+
+
+def gff_fasta_to_gff(gff_path, fasta_path, out):
+    sequences = {}
+    with open_maybe_zipped(fasta_path, "rt") as fh:
+        current = None
+        for line in fh:
+            if line.startswith(">"):
+                # Clean the ID (e.g., 'lcl|contig1' -> 'contig1')
+                full_id = line[1:].strip().split()[0]
+                current = clean_id(full_id)
+                sequences[current] = []
+            elif current:
+                sequences[current].append(line.strip())
+
+    out.write("##gff-version 3\n")
+
+    for cid, seq_parts in sequences.items():
+        full_seq = "".join(seq_parts)
+        out.write(f"##sequence-region {cid} 1 {len(full_seq)}\n")
+    
+    # Write GFF lines and collect which contigs are actually used
+    used_contigs = set()
+    with open_maybe_zipped(gff_path, "rt") as fh:
+        for line in fh:
+            if line.startswith("#"): continue
+            parts = line.split("\t")
+            if len(parts) > 0:
+                contig_id = clean_id(parts[0])
+                # Ensure the GFF uses the cleaned ID
+                parts[0] = contig_id
+                out.write("\t".join(parts))
+                used_contigs.add(contig_id)
+
+    out.write("##FASTA\n")
+    for cid in used_contigs:
+        if cid in sequences:
+            out.write(f">{cid}\n")
+            full_seq = "".join(sequences[cid])
+            for i in range(0, len(full_seq), 60):
+                out.write(full_seq[i:i+60] + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Convert GenBank or GFF+FASTA to Prokka-like GFF3.\n\n"
+            "Input must be either:\n"
+            "  --genbank <file>\n"
+            "or:\n"
+            "  --gff <file> --fasta <file>\n\n"
+            "Input files may be gzipped (.gz) or bzipped (.bz2). Output is written to stdout "
+            "unless --out is specified."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("--genbank", help="Input GenBank file")
+    parser.add_argument("--gff", help="Input GFF3 file")
+    parser.add_argument("--fasta", help="Input FASTA file")
+    parser.add_argument("--out", help="Output GFF3 file (default: stdout)")
+
+    args = parser.parse_args() 
+
+    out = open(args.out, "w") if args.out else sys.stdout
+    if args.genbank:
+        genbank_to_gff(args.genbank, out)
+    elif args.gff and args.fasta:
+        gff_fasta_to_gff(args.gff, args.fasta, out)
+    else:
+        parser.print_help()
+
+    if args.out: out.close()
+
+
+if __name__ == "__main__":
+    main()

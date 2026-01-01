@@ -4,7 +4,8 @@ A personal collection of command-line utilities for bioinformatics and data anal
 
 ## Categories
 
-- **`fasta/`** - Tools for working with FASTA sequence files
+- **`fasta/`** - Scripts working with FASTA sequence files
+- **`file_formats/`** - Scripts modifying or converting file formats
 
 ## Installation
 
