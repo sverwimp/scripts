@@ -7,10 +7,20 @@ import re
 import sys
 
 
-def open_maybe_zipped(path, mode="rt"):
-    if path.endswith(".gz"):
+def is_gzipped(path):
+    with open(path, "rb") as f:
+        return f.read(2) == b"\x1f\x8b"
+    
+
+def is_bzipped(path):
+    with open(path, "rb") as f:
+        return f.read(3) == b"BZh"
+
+
+def open_file(path, mode="rt"):
+    if is_gzipped(path):
         return gzip.open(path, mode)
-    elif path.endswith(".bz2"):
+    elif is_bzipped(path):
         return bz2.open(path, mode)
     return open(path, mode)
 
@@ -79,7 +89,7 @@ def format_gff_attrs(feat_type, attrs):
 
 def parse_genbank(path):
     """Generator yielding contig records from a GenBank file."""
-    with open_maybe_zipped(path, "rt") as fh:
+    with open_file(path, "rt") as fh:
         record = {"seqid": None, "features": [], "sequence": []}
         current_feat = None
         current_qual = None
@@ -144,7 +154,7 @@ def genbank_to_gff(genbank_path, out):
 
 def gff_fasta_to_gff(gff_path, fasta_path, out):
     sequences = {}
-    with open_maybe_zipped(fasta_path, "rt") as fh:
+    with open_file(fasta_path, "rt") as fh:
         current = None
         for line in fh:
             if line.startswith(">"):
@@ -163,7 +173,7 @@ def gff_fasta_to_gff(gff_path, fasta_path, out):
     
     # Write GFF lines and collect which contigs are actually used
     used_contigs = set()
-    with open_maybe_zipped(gff_path, "rt") as fh:
+    with open_file(gff_path, "rt") as fh:
         for line in fh:
             if line.startswith("#"): continue
             parts = line.split("\t")
