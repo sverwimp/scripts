@@ -1,6 +1,6 @@
 # Scripts
 
-A personal collection of command-line utilities for bioinformatics and data analysis.
+A personal collection of standalone, portable command-line utilities for bioinformatics and data analysis.
 
 ## Categories
 
@@ -8,6 +8,8 @@ A personal collection of command-line utilities for bioinformatics and data anal
 - **`file_formats/`** - Scripts modifying or converting file formats
 
 ## Installation
+
+### **Option 1: Install all scripts**
 
 Clone the repository and run the installer:
 
@@ -40,6 +42,10 @@ git pull
 
 Only modified or new scripts will be copied. Use `./install.sh -f` to force reinstall everything.
 
+### **Option 2: Use individual scripts**
+
+Each script is self-contained. You can copy any single script directly and use it without installing the entire collection.
+
 ## Requirements
 
-Most scripts use standard Unix tools (bash, awk, grep) and should work on Linux/macOS without additional dependencies.
+Most scripts use standard Unix tools (bash, awk, grep) or Python and should work on Linux/macOS without additional dependencies.
