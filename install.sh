@@ -120,8 +120,8 @@ while IFS= read -r -d '' script; do
     
     # Skip metadata and the installer itself
     if [[ "$filename" == "install.sh" ]] || \
-       [[ "$filename" == "README.md" ]] || \
-       [[ "$filename" == "LICENSE" ]] || \
+       [[ "${filename,,}" == "readme.md" ]] || \
+       [[ "${filename,,}" == "license" ]] || \
        [[ "$rel_path" == .* ]] || \
        [[ "$filename" == *.c ]]; then # Skip C files here; handled in the next loop
         continue
@@ -140,14 +140,14 @@ while IFS= read -r -d '' script; do
         chmod +x "$dest_file"
         
         if [ "$is_update" = true ]; then
-            echo "   ↻ $filename (updated)"
+            echo "  ↻ $filename (updated)"
         else
-            echo "   ✓ $filename"
+            echo "  ✓ $filename"
         fi
         # SAFE INCREMENT: The || true prevents set -e from killing the script
         ((updated_count++)) || true
     else
-        echo "   - $filename (up to date)"
+        echo "  - $filename (up to date)"
         ((skipped_count++)) || true
     fi
     
@@ -167,17 +167,17 @@ while IFS= read -r -d '' c_file; do
     dest_file="$INSTALL_DIR/$filename"
     
     if should_copy "$c_file" "$dest_file"; then
-        echo "   Compiling $filename..."
+        echo "  Compiling $filename..."
         
-        if gcc -O2 -Wall "$c_file" -o "$dest_file"; then
+        if gcc -O2 -Wall "$c_file" -o "$dest_file" -lz; then
             chmod +x "$dest_file"
-            echo "   ✓ $filename (compiled)"
+            echo "  ✓ $filename (compiled)"
             ((c_updated++)) || true
         else
-            echo "   ✗ Failed to compile $filename" >&2
+            echo "  ✗ Failed to compile $filename" >&2
         fi
     else
-        echo "   - $filename (up to date)"
+        echo "  - $filename (up to date)"
     fi
     
     ((c_count++)) || true
