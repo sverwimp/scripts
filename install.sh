@@ -113,34 +113,48 @@ should_copy() {
     return 1  # Don't copy
 }
 
-# Find all executable scripts in subdirectories (excluding hidden dirs, install.sh, and README files)
+# Find all files, but exclude hidden paths, the installer, and metadata
 while IFS= read -r -d '' script; do
+    filename="$(basename "$script")"
     rel_path="${script#$SCRIPT_DIR/}"
     
-    if [[ "$rel_path" == .* ]] || [[ "$(basename "$script")" == "install.sh" ]]; then
+    # Skip metadata and the installer itself
+    if [[ "$filename" == "install.sh" ]] || \
+       [[ "$filename" == "README.md" ]] || \
+       [[ "$filename" == "LICENSE" ]] || \
+       [[ "$rel_path" == .* ]] || \
+       [[ "$filename" == *.c ]]; then # Skip C files here; handled in the next loop
         continue
     fi
     
-    filename="$(basename "$script")"
     dest_file="$INSTALL_DIR/$filename"
     
-    # Check if we should copy this file
+    # Check update status BEFORE the copy
+    is_update=false
+    if [ -f "$dest_file" ] && [ "$script" -nt "$dest_file" ]; then
+        is_update=true
+    fi
+
     if should_copy "$script" "$dest_file"; then
         cp "$script" "$dest_file"
         chmod +x "$dest_file"
-        if [ -f "$dest_file" ] && [ "$script" -nt "$dest_file" ]; then
-            echo "  ↻ $filename (updated)"
+        
+        if [ "$is_update" = true ]; then
+            echo "   ↻ $filename (updated)"
         else
-            echo "  ✓ $filename"
+            echo "   ✓ $filename"
         fi
-        ((updated_count++))
+        # SAFE INCREMENT: The || true prevents set -e from killing the script
+        ((updated_count++)) || true
     else
-        echo "  - $filename (up to date)"
-        ((skipped_count++))
+        echo "   - $filename (up to date)"
+        ((skipped_count++)) || true
     fi
     
-    ((script_count++))
-done < <(find "$SCRIPT_DIR" -type f \( -name "*.sh" -o -name "fasta-*" -o -name "*.py" -o -name "*.pl" -o -name "*.rb" \) -print0)
+    ((script_count++)) || true
+
+done < <(find "$SCRIPT_DIR" -type f ! -path "*/.*" -print0)
+
 
 # Find and compile C programs
 echo
@@ -152,22 +166,21 @@ while IFS= read -r -d '' c_file; do
     filename="$(basename "$c_file" .c)"
     dest_file="$INSTALL_DIR/$filename"
     
-    # Check if we need to compile (source is newer or dest doesn't exist or force mode)
     if should_copy "$c_file" "$dest_file"; then
-        echo "  Compiling $filename..."
+        echo "   Compiling $filename..."
         
         if gcc -O2 -Wall "$c_file" -o "$dest_file"; then
             chmod +x "$dest_file"
-            echo "  ✓ $filename (compiled)"
-            ((c_updated++))
+            echo "   ✓ $filename (compiled)"
+            ((c_updated++)) || true
         else
-            echo "  ✗ Failed to compile $filename" >&2
+            echo "   ✗ Failed to compile $filename" >&2
         fi
     else
-        echo "  - $filename (up to date)"
+        echo "   - $filename (up to date)"
     fi
     
-    ((c_count++))
+    ((c_count++)) || true
 done < <(find "$SCRIPT_DIR" -type f -name "*.c" ! -path "*/.*" -print0)
 
 if [ $c_count -eq 0 ]; then
