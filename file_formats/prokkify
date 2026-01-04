@@ -77,7 +77,7 @@ def format_gff_attrs(feat_type, attrs):
             gff_attrs[k] = attrs[k]
     
     if "translation" in attrs:
-        gff_attrs["translation"] = re.sub(r"\s+", "", attrs["translation"])
+        gff_attrs["translation"] = "".join(attrs["translation"].split())
 
     items = []
     for k, v in gff_attrs.items():
