@@ -70,25 +70,72 @@ def format_gff_attrs(feat_type, attrs):
             found = re.findall(r"GO:\d+", v)
             go_terms.extend(found)
     if go_terms:
-        gff_attrs["Ontology_term"] = ",".join(sorted(list(set(go_terms))))
+        gff_attrs["Ontology_term"] = ",".join(sorted(set(go_terms)))
 
     for k in ["gene", "product", "protein_id", "note", "inference"]:
         if k in attrs and k not in gff_attrs:
             gff_attrs[k] = attrs[k]
-
+    
     if "translation" in attrs:
         gff_attrs["translation"] = re.sub(r"\s+", "", attrs["translation"])
 
     items = []
     for k, v in gff_attrs.items():
-        safe_v = str(v).replace(";", "%3B").replace("=", "%3D").replace("&", "%26").replace(",", "%2C")
+        # Don't escape commas in Ontology_term (they're used as separators)
+        if k == "Ontology_term":
+            safe_v = str(v).replace(";", "%3B").replace("=", "%3D").replace("&", "%26")
+        else:
+            safe_v = str(v).replace(";", "%3B").replace("=", "%3D").replace("&", "%26").replace(",", "%2C")
         items.append(f"{k}={safe_v}")
     
     return ";".join(items)
 
 
+def extract_method_from_note(note):
+    """Extract prediction method from PGAP-style notes."""
+    if not note:
+        return None
+    # Look for "gene prediction method: XXXX."
+    match = re.search(r'gene prediction method:\s*([^.]+)', note)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
 def parse_genbank(path):
-    """Generator yielding contig records from a GenBank file."""
+    """Generator yielding contig records from a GenBank file.
+
+    Result dictionary structure:
+    {
+    "seqid": str, - Contig identifier
+    "features": [
+        {"type": str, - Feature type (e.g., CDS, gene, source)
+        "loc": str, - Location string (e.g., complement("1..201"))
+        "attrs": {...} - Attributes dictionary
+        },
+    "sequence": str - Full nucleotide sequence of the contig
+    }
+
+    where features have attributes depending on their type
+    Attributes dictionary may contain:
+        gene: str - Gene name
+        locus_tag: str - Locus tag
+        EC_number: str - Enzyme Commission number
+        inference: str - Inference information
+        note: str - Notes
+        GO_function: str - GO function terms
+        GO_process: str - GO process terms
+        codon_start: str - Codon start
+        transl_table: str - Translation table
+        product: str - Product description
+        protein_id: str - Protein identifier
+        translation: str - Amino acid sequence
+        ... and many more (https://labinfoman.com/app/bxseqtools/help_gb_format.php)
+    (for type == "source"):
+        organism: str - Organism name
+        mol_type: str - Molecule type
+        db_xref: str - Database cross-references (TaxID, etc.)
+    """
     with open_file(path, "rt") as fh:
         record = {"seqid": None, "features": [], "sequence": []}
         current_feat = None
@@ -130,21 +177,39 @@ def parse_genbank(path):
                     elif current_qual:
                         current_feat["attrs"][current_qual] += " " + content.strip('"')
             elif state == "ORIGIN":
-                record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line))
+                record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line).upper())
 
 
 def genbank_to_gff(genbank_path, out):
     records = list(parse_genbank(genbank_path))
     out.write("##gff-version 3\n")
+    out.write("#!Converted from GenBank to Prokka-like GFF by prokkify\n")
     for rec in records:
         out.write(f"##sequence-region {rec['seqid']} 1 {len(rec['sequence'])}\n")
-    for rec in records:
+
+        # species directive from source feature taxon
+        source_feat = next((f for f in rec.get("features", []) if f["type"] == "source"), None)
+        if source_feat:
+            taxon_id = re.search(r"taxon:(\d+)", source_feat.get("attrs", {}).get("db_xref", ""))
+            taxon_url = f"https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id={taxon_id.group(1)}" if taxon_id else ""
+            if taxon_url:
+                out.write(f"##species {taxon_url}\n")
+        
+        out.write(f"{rec['seqid']}\tLocal\tregion\t1\t{len(rec['sequence'])}\t.\t+\t.\tID={rec['seqid']}:1..{len(rec['sequence'])};Name={rec['seqid']}\n")
+        
         for feat in rec["features"]:
             if feat["type"] == "source": continue
+            # Determine source field based on feature type and note
+            if feat["type"] == "gene":
+                source = "."
+            else:
+                method = extract_method_from_note(feat["attrs"].get("note"))
+                source = method if method else "." #if method else "GenBank"
+            
             locs = parse_location(feat["loc"])
             attr_str = format_gff_attrs(feat["type"], feat["attrs"])
             for start, end, strand in locs:
-                out.write(f"{rec['seqid']}\tGenBank\t{feat['type']}\t{start}\t{end}\t.\t{strand}\t0\t{attr_str}\n")
+                out.write(f"{rec['seqid']}\t{source}\t{feat['type']}\t{start}\t{end}\t.\t{strand}\t0\t{attr_str}\n")
     out.write("##FASTA\n")
     for rec in records:
         out.write(f">{rec['seqid']}\n")
@@ -153,45 +218,34 @@ def genbank_to_gff(genbank_path, out):
 
 
 def gff_fasta_to_gff(gff_path, fasta_path, out):
+    """Convert GFF + FASTA to Prokka-like GFF format.
+    Extracts sequences from the FASTA and appends them to a copy of the existing GFF.
+    """
     sequences = {}
     with open_file(fasta_path, "rt") as fh:
         current = None
         for line in fh:
             if line.startswith(">"):
-                # Clean the ID (e.g., 'lcl|contig1' -> 'contig1')
                 full_id = line[1:].strip().split()[0]
                 current = clean_id(full_id)
                 sequences[current] = []
             elif current:
-                sequences[current].append(line.strip())
+                sequences[current].append(line.strip().upper())
 
-    out.write("##gff-version 3\n")
-
-    for cid, seq_parts in sequences.items():
-        full_seq = "".join(seq_parts)
-        out.write(f"##sequence-region {cid} 1 {len(full_seq)}\n")
-    
-    # Write GFF lines and collect which contigs are actually used
-    used_contigs = set()
     with open_file(gff_path, "rt") as fh:
+        first_line = fh.readline() # Should be gff-version line
+        out.write(first_line)
+        out.write("#!Converted from GFF+FASTA to Prokka-like GFF by prokkify\n")
         for line in fh:
-            if line.startswith("#"): continue
-            parts = line.split("\t")
-            if len(parts) > 0:
-                contig_id = clean_id(parts[0])
-                # Ensure the GFF uses the cleaned ID
-                parts[0] = contig_id
-                out.write("\t".join(parts))
-                used_contigs.add(contig_id)
-
+            out.write(line)
+    
     out.write("##FASTA\n")
-    for cid in used_contigs:
-        if cid in sequences:
-            out.write(f">{cid}\n")
-            full_seq = "".join(sequences[cid])
-            for i in range(0, len(full_seq), 60):
-                out.write(full_seq[i:i+60] + "\n")
-
+    for cid in sequences:
+        out.write(f">{cid}\n")
+        full_seq = "".join(sequences[cid])
+        for i in range(0, len(full_seq), 60):
+            out.write(full_seq[i:i+60] + "\n")
+   
 
 def main():
     parser = argparse.ArgumentParser(
@@ -207,21 +261,26 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("--genbank", help="Input GenBank file")
-    parser.add_argument("--gff", help="Input GFF3 file")
+    parser.add_argument("--gff", help="Input GFF file")
     parser.add_argument("--fasta", help="Input FASTA file")
-    parser.add_argument("--out", help="Output GFF3 file (default: stdout)")
+    parser.add_argument("--out", help="Output GFF file (default: stdout)")
 
     args = parser.parse_args() 
 
     out = open(args.out, "w") if args.out else sys.stdout
+    if args.genbank and (args.gff or args.fasta):
+        print("Warning: only one of --genbank or --gff/--fasta should be provided.")
+        print("Proceeding with --genbank input.")
     if args.genbank:
         genbank_to_gff(args.genbank, out)
     elif args.gff and args.fasta:
         gff_fasta_to_gff(args.gff, args.fasta, out)
     else:
         parser.print_help()
+        sys.exit(1)
 
     if args.out: out.close()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
