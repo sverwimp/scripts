@@ -25,6 +25,14 @@ fasta-extract -c 'mitochondria' genome.fa
 
 Use `fasta-extract -h` for help or `fasta-extract -m` for more details.
 
+> [!TIP]
+> If you only have a few patterns, you don't need a list file. Use the regex pipe `|` to match multiple items:
+> 
+> ```bash
+> fasta-extract -r '(chr1|chrX|chrY)' genome.fa
+> fasta-extract -r 'contig_[0-9]+' genome.fa
+> ```
+
 ### `fasta-size`
 Calculate total sequence length (base pairs) from FASTA files.
 
