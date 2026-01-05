@@ -10,6 +10,13 @@ FORCE_INSTALL=false
 # Get the directory where this script is located (repo root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Counters
+SCRIPT_COUNT=0
+UPDATED_COUNT=0
+SKIPPED_COUNT=0
+C_COUNT=0
+C_UPDATED=0
+
 show_help() {
     cat << EOF
 Install bioinformatics scripts to a directory and add it to PATH.
@@ -43,36 +50,198 @@ Update mode:
 EOF
 }
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        -f|--force)
-            FORCE_INSTALL=true
-            shift
-            ;;
-        -*)
-            echo "Error: Unknown option '$1'" >&2
-            show_help >&2
-            exit 1
-            ;;
-        *)
-            if [ -z "$INSTALL_DIR" ]; then
-                INSTALL_DIR="$1"
-            else
-                echo "Error: Too many arguments" >&2
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -f|--force)
+                FORCE_INSTALL=true
+                shift
+                ;;
+            -*)
+                echo "Error: Unknown option '$1'" >&2
                 show_help >&2
                 exit 1
+                ;;
+            *)
+                if [ -z "$INSTALL_DIR" ]; then
+                    INSTALL_DIR="$1"
+                else
+                    echo "Error: Too many arguments" >&2
+                    show_help >&2
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+}
+
+should_copy() {
+    local src="$1"
+    local dst="$2"
+    [[ "$FORCE_INSTALL" == true ]] && return 0      # Always copy in force mode
+    [[ ! -f "$dst" ]] && return 0                   # Copy if destination doesn't exist
+    [[ "$src" -nt "$dst" ]] && return 0             # Copy if source is newer than destination
+    return 1                                        # Don't copy           
+}
+
+# ✓ Alt + 10003
+# ↻ Alt + 8635 
+# ✗ Alt + 10007
+install_basic_scripts() {
+    while IFS= read -r -d '' script; do
+        filename="$(basename "$script")"
+        rel_path="${script#$SCRIPT_DIR/}"
+        
+        # Filter logic: don't copy install script, readme files, license, 
+        # hidden files, and C files (compiled later)
+        [[ "$filename" == "install.sh" ]] && continue
+        [[ "${filename,,}" == "readme.md" ]] && continue
+        [[ "${filename,,}" == "license" ]] && continue
+        [[ "$rel_path" == .* ]] && continue
+        [[ "$filename" == *.c ]] && continue
+
+        dest_file="$INSTALL_DIR/$filename"
+
+        is_update=false
+        if [ -f "$dest_file" ] && [ "$script" -nt "$dest_file" ]; then
+            is_update=true
+        fi
+        
+        if should_copy "$script" "$dest_file"; then
+            cp "$script" "$dest_file"
+            chmod +x "$dest_file"
+
+            if [ "$is_update" = true ]; then
+                echo "  ↻ $filename (updated)"
+            else
+                echo "  ✓ $filename"
             fi
-            shift
+            # SAFE INCREMENT: The || true prevents set -e from killing the script
+            ((UPDATED_COUNT++)) || true
+        else
+            echo "  - $filename (up to date)"
+            ((SKIPPED_COUNT++)) || true
+        fi
+
+        ((SCRIPT_COUNT++)) || true
+
+    done < <(find "$SCRIPT_DIR" -type f ! -path "*/.*" -print0)
+}
+
+check_gcc_installed() {
+    if ! command -v gcc &> /dev/null; then
+        echo
+        echo "Warning: gcc is required to compile C programs." >&2
+        return 1
+    fi
+    return 0
+}
+
+check_zlib_installed() {
+    if ! printf "#include <zlib.h>\nint main(){return 0;}\n" | gcc -x c - -o /dev/null -lz >/dev/null 2>&1; then
+        echo
+        echo "Warning: zlib development package is required to compile C programs." >&2
+        echo "Please install it (e.g., 'sudo apt-get install zlib1g-dev' on Debian/Ubuntu)." >&2
+        return 1
+    fi
+    return 0
+}
+
+compile_c_scripts() {
+    echo
+    echo "Looking for C programs to compile..."
+
+    if ! check_gcc_installed || ! check_zlib_installed; then
+        echo "Skipping C program compilation." >&2
+        return
+    fi
+
+    while IFS= read -r -d '' c_file; do
+        filename="$(basename "$c_file" .c)"
+        dest_file="$INSTALL_DIR/$filename"
+        
+        if should_copy "$c_file" "$dest_file"; then
+            echo "  Compiling $filename..."
+
+            if gcc -O2 -Wall "$c_file" -o "$dest_file" -lz; then
+                chmod +x "$dest_file"
+                echo "  ✓ $filename (compiled)"
+                ((C_UPDATED++)) || true
+            else
+                echo "  ✗ Failed to compile $filename" >&2
+            fi
+        else
+            echo "  - $filename (up to date)"
+        fi
+        ((C_COUNT++)) || true
+    done < <(find "$SCRIPT_DIR" -type f -name "*.c" ! -path "*/.*" -print0)
+
+    if [ $C_COUNT -eq 0 ]; then
+        echo "  No C programs found"
+    fi
+}
+
+configure_path() {
+    echo
+    echo "Configuring PATH..."
+
+    SHELL_NAME="$(basename "$SHELL")"
+    case "$SHELL_NAME" in
+        bash)
+            RC_FILE="$HOME/.bashrc"
+            ;;
+        zsh)
+            RC_FILE="$HOME/.zshrc"
+            ;;
+        fish)
+            RC_FILE="$HOME/.config/fish/config.fish"
+            ;;
+        *)
+            RC_FILE="$HOME/.profile"
+            echo "  Warning: Using .profile (detected shell: $SHELL_NAME)"
             ;;
     esac
-done
 
-INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+    if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
+        echo "  ✓ $INSTALL_DIR is already in PATH" 
+    else
+        echo "  Adding $INSTALL_DIR to PATH in $RC_FILE"
+
+        if [ ! -f "$RC_FILE" ]; then
+            echo "  Error: Unable add $INSTALL_DIR to PATH."
+            echo "         $RC_FILE does not exist. Please add $INSTALL_DIR to your PATH manually."  
+            return
+        fi
+
+        # Add PATH export to shell config
+        if [ "$SHELL_NAME" = "fish" ]; then
+            # Fish shell uses different syntax
+            echo "" >> "$RC_FILE"
+            echo "# Added by scripts installer" >> "$RC_FILE"
+            echo "set -gx PATH $INSTALL_DIR \$PATH" >> "$RC_FILE"
+        else
+            echo "" >> "$RC_FILE"
+            echo "# Added by scripts installer" >> "$RC_FILE"
+            echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$RC_FILE"
+        fi
+        
+        echo "  ✓ Updated $RC_FILE"
+        echo
+        echo "  To use the scripts immediately, run:"
+        echo "    source $RC_FILE"
+        echo "  Or simply open a new terminal."
+    fi
+}
+
+# --- Main ---
+
+parse_args "$@"
 
 echo "=== Script Installation ==="
 echo "Target directory: $INSTALL_DIR"
@@ -89,166 +258,29 @@ fi
 
 echo
 echo "Copying scripts..."
-script_count=0
-updated_count=0
-skipped_count=0
 
-should_copy() {
-    local src="$1"
-    local dst="$2"
-    
-    if [ "$FORCE_INSTALL" = true ]; then
-        return 0  # Always copy in force mode
-    fi
-    
-    if [ ! -f "$dst" ]; then
-        return 0  # Copy if destination doesn't exist
-    fi
-    
-    # Copy if source is newer than destination
-    if [ "$src" -nt "$dst" ]; then
-        return 0
-    fi
-    
-    return 1  # Don't copy
-}
+install_basic_scripts
+compile_c_scripts
 
-# Find all files, but exclude hidden paths, the installer, and metadata
-while IFS= read -r -d '' script; do
-    filename="$(basename "$script")"
-    rel_path="${script#$SCRIPT_DIR/}"
-    
-    # Skip metadata and the installer itself
-    if [[ "$filename" == "install.sh" ]] || \
-       [[ "${filename,,}" == "readme.md" ]] || \
-       [[ "${filename,,}" == "license" ]] || \
-       [[ "$rel_path" == .* ]] || \
-       [[ "$filename" == *.c ]]; then # Skip C files here; handled in the next loop
-        continue
-    fi
-    
-    dest_file="$INSTALL_DIR/$filename"
-    
-    # Check update status BEFORE the copy
-    is_update=false
-    if [ -f "$dest_file" ] && [ "$script" -nt "$dest_file" ]; then
-        is_update=true
-    fi
+TOTAL_COUNT=$((SCRIPT_COUNT + C_COUNT))
+TOTAL_UPDATED=$((UPDATED_COUNT + C_UPDATED))
 
-    if should_copy "$script" "$dest_file"; then
-        cp "$script" "$dest_file"
-        chmod +x "$dest_file"
-        
-        if [ "$is_update" = true ]; then
-            echo "  ↻ $filename (updated)"
-        else
-            echo "  ✓ $filename"
-        fi
-        # SAFE INCREMENT: The || true prevents set -e from killing the script
-        ((updated_count++)) || true
-    else
-        echo "  - $filename (up to date)"
-        ((skipped_count++)) || true
-    fi
-    
-    ((script_count++)) || true
-
-done < <(find "$SCRIPT_DIR" -type f ! -path "*/.*" -print0)
-
-
-# Find and compile C programs
-echo
-echo "Looking for C programs to compile..."
-c_count=0
-c_updated=0
-
-while IFS= read -r -d '' c_file; do
-    filename="$(basename "$c_file" .c)"
-    dest_file="$INSTALL_DIR/$filename"
-    
-    if should_copy "$c_file" "$dest_file"; then
-        echo "  Compiling $filename..."
-        
-        if gcc -O2 -Wall "$c_file" -o "$dest_file" -lz; then
-            chmod +x "$dest_file"
-            echo "  ✓ $filename (compiled)"
-            ((c_updated++)) || true
-        else
-            echo "  ✗ Failed to compile $filename" >&2
-        fi
-    else
-        echo "  - $filename (up to date)"
-    fi
-    
-    ((c_count++)) || true
-done < <(find "$SCRIPT_DIR" -type f -name "*.c" ! -path "*/.*" -print0)
-
-if [ $c_count -eq 0 ]; then
-    echo "  No C programs found"
-fi
-
-total_count=$((script_count + c_count))
-total_updated=$((updated_count + c_updated))
-
-if [ $total_count -eq 0 ]; then
+if [ $TOTAL_COUNT -eq 0 ]; then
     echo
     echo "Warning: No scripts found to install!" >&2
     exit 1
 fi
 
 echo
-if [ $total_updated -gt 0 ]; then
-    echo "Installed/Updated $total_updated of $total_count script(s) to $INSTALL_DIR"
-    if [ $skipped_count -gt 0 ]; then
-        echo "($skipped_count script(s) already up to date)"
+if [ $TOTAL_UPDATED -gt 0 ]; then
+    echo "Installed/Updated $TOTAL_UPDATED of $TOTAL_COUNT script(s) to $INSTALL_DIR"
+    if [ $SKIPPED_COUNT -gt 0 ]; then
+        echo "($SKIPPED_COUNT script(s) already up to date)"
     fi
 else
-    echo "All $total_count script(s) are already up to date in $INSTALL_DIR"
+    echo "All $TOTAL_COUNT script(s) are already up to date in $INSTALL_DIR"
 fi
 
-echo
-echo "Configuring PATH..."
-
-SHELL_NAME="$(basename "$SHELL")"
-case "$SHELL_NAME" in
-    bash)
-        RC_FILE="$HOME/.bashrc"
-        ;;
-    zsh)
-        RC_FILE="$HOME/.zshrc"
-        ;;
-    fish)
-        RC_FILE="$HOME/.config/fish/config.fish"
-        ;;
-    *)
-        RC_FILE="$HOME/.profile"
-        echo "  Warning: Using .profile (detected shell: $SHELL_NAME)"
-        ;;
-esac
-
-if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
-    echo "  ✓ $INSTALL_DIR is already in PATH"
-else
-    echo "  Adding $INSTALL_DIR to PATH in $RC_FILE"
-    
-    # Add PATH export to shell config
-    if [ "$SHELL_NAME" = "fish" ]; then
-        # Fish shell uses different syntax
-        echo "" >> "$RC_FILE"
-        echo "# Added by scripts installer" >> "$RC_FILE"
-        echo "set -gx PATH $INSTALL_DIR \$PATH" >> "$RC_FILE"
-    else
-        echo "" >> "$RC_FILE"
-        echo "# Added by scripts installer" >> "$RC_FILE"
-        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$RC_FILE"
-    fi
-    
-    echo "  ✓ Updated $RC_FILE"
-    echo
-    echo "  To use the scripts immediately, run:"
-    echo "    source $RC_FILE"
-    echo "  Or simply open a new terminal."
-fi
 
 echo
 echo "=== Installation Complete ==="

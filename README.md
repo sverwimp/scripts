@@ -25,7 +25,7 @@ chmod +x install.sh
 This will:
 - Install all scripts to `~/.scripts` (or a custom directory of your choice)
 - Make all scripts executable
-- Compile any C programs automatically
+- Compile any C programs automatically (only if gcc and zlib are present)
 - Add the directory to your PATH
 
 **Custom installation directory:**
