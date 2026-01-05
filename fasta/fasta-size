@@ -1,96 +1,232 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
-show_help() {
-  cat << EOF
-Calculates and displays the size (in base pairs) for each provided FASTA file.
+import argparse
+import bz2
+import gzip
+import os
+import sys
+import tempfile
 
-Usage: $(basename "$0") [OPTIONS] file1.fasta [file2.fasta ...]
 
-Options:
-  -h, --help    Show this help message
+def is_gzipped(path):
+    with open(path, "rb") as f:
+        return f.read(2) == b"\x1f\x8b"
+    
 
-Output:
-  - Single file:    prints only the size number
-  - Multiple files: prints "filename: size" for each file
+def is_bzipped(path):
+    with open(path, "rb") as f:
+        return f.read(3) == b"BZh"
 
-Examples:
-  Single file:
-    $(basename "$0") genome.fasta
-    Output: 3141592
 
-  Multiple files:
-    $(basename "$0") genome1.fasta genome2.fasta
-    Output: genome1.fasta: 3141592
-            genome2.fasta: 2718281
+def open_file(path, mode="rt"):
+    if is_gzipped(path):
+        return gzip.open(path, mode)
+    elif is_bzipped(path):
+        return bz2.open(path, mode)
+    return open(path, mode)
 
-  Works with stdin:
-    cat genome.fasta | $(basename "$0")
-EOF
-}
 
-FILES=()
+def write_fasta(data: tuple, width: int = 60) -> str:
+    """Takes a (header, sequence) tuple and returns a FASTA formatted string."""
+    header, sequence = data
+    fasta_str = f">{header}\n"
+    for i in range(0, len(sequence), width):
+        fasta_str += sequence[i:i+width] + "\n"
+    return fasta_str
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    -*)
-      echo "Error: Unknown option '$1'" >&2
-      show_help >&2
-      exit 1
-      ;;
-    *)
-      FILES+=("$1")
-      shift
-      ;;
-  esac
-done
 
-# If no files provided, check if stdin has data
-if [ "${#FILES[@]}" -eq 0 ]; then
-  if [ -t 0 ]; then
-    # stdin is a terminal (no piped data)
-    echo "Error: No input files specified." >&2
-    show_help >&2
-    exit 1
-  else
-    # stdin has piped data
-    FILES=("/dev/stdin")
-  fi
-fi
+class FastaEntry:
+    """Represents a single FASTA entry with header and sequence."""
+    
+    def __init__(self, header: str, sequence: list[str]):
+        self.header: str = header
+        self.sequence: str = self.clean_sequence(sequence)
+        self.seq_len: int = len(self.sequence)
 
-# Determine if we're processing multiple files
-SHOW_FILENAME=false
-if [ "${#FILES[@]}" -gt 1 ]; then
-  SHOW_FILENAME=true
-fi
+    def clean_sequence(self, sequence: list[str]) -> str:
+        """Remove whitespace and join sequence lines."""
+        return "".join(sequence).replace(" ", "").replace("\n", "")
 
-for file in "${FILES[@]}"; do
-  if [ ! -f "$file" ] && [ "$file" != "/dev/stdin" ]; then
-    echo "Error: File '$file' not found or is not a regular file." >&2
-    continue
-  fi
-  
-  # 1. /^>/ { next } : If the line starts with '>', skip to the next line (it's a FASTA header).
-  # 2. { total += length($0) } : For all other lines (sequence data), add the length of the line to 'total'.
-  # 3. END { ... } : Executes after all lines are processed.
-  # 4. print total : Prints the final count.
-  size=$(awk '/^>/ { next } { total += length($0) } END { print total+0 }' "$file")
-  
-  # Check if we got a valid number
-  if [[ ! "$size" =~ ^[0-9]+$ ]]; then
-    echo "Error: Could not calculate size for '$file'." >&2
-    continue
-  fi
-  
-  # Output based on number of files
-  if [ "$SHOW_FILENAME" = true ]; then
-    printf "%s: %s\n" "$file" "$size"
-  else
-    printf "%s\n" "$size"
-  fi
-done
+    def fasta_str(self, width: int = 60) -> str:
+        """Return formatted FASTA string."""
+        return write_fasta((self.header, self.sequence), width)
 
-exit 0
+
+class FastaFile:
+    def __init__(self, path: str):
+        self.path = path
+        self.entries = []
+        self._parse_file() # Populates self.entries
+        if not self.entries:
+            raise ValueError(f"No FASTA entries found in file: {self.path}")
+
+    def _parse_file(self):
+        if not os.path.exists(self.path):
+            raise FileNotFoundError(f"Cannot find file: {self.path}")
+        
+        header = None
+        sequence = []
+        with open_file(self.path, "rt") as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith(">"):
+                    # Write current entry
+                    if header:
+                        self.add_fasta_entry(header, sequence)
+
+                    header = line[1:].strip()
+                    sequence = []
+                else:
+                    sequence.append(line.strip().upper())
+            # Final entry
+            if header:
+                self.add_fasta_entry(header, sequence)
+
+    def add_fasta_entry(self, header: str, sequence: list[str]):
+        entry = FastaEntry(header=header, sequence=sequence)
+        self.entries.append(entry)
+
+    def write_entries(self, width: int = 60):
+        for entry in self.entries:
+            yield entry.fasta_str(width=width)
+
+    def total_size(self) -> int:
+        """Return total size (sum of seq_len) of all FastaEntry objects"""
+        return sum(entry.seq_len for entry in self.entries)
+
+    def smallest_entry(self) -> FastaEntry:
+        """Return only FastaEntry with smallest seq_len"""
+        return min(self.entries, key=lambda x: x.seq_len)
+    
+    def largest_entry(self) -> FastaEntry:
+        """Return only FastaEntry with largest seq_len"""
+        return max(self.entries, key=lambda x: x.seq_len)
+    
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Calculate total size or extract FASTA entries by sequence length",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "fasta",
+        nargs="*",
+        help="Input FASTA file(s) (can be gzipped or bzipped). If not provided, reads from stdin."
+    )
+    parser.add_argument(
+        "-o", "--out",
+        help="Output file (default: stdout, only used with --min/--max/--threshold)"
+    )
+    parser.add_argument(
+        "-w", "--width",
+        type=int,
+        default=60,
+        help="Line width for FASTA output (default: 60)"
+    )
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        metavar="SIZE",
+        help="Extract entries >= SIZE bp/aa (use --max-threshold for <=)"
+    )
+    parser.add_argument(
+        "--max-threshold",
+        type=int,
+        metavar="SIZE",
+        help="Extract entries <= SIZE bp/aa"
+    )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--min",
+        action="store_true",
+        help="Extract only the smallest FASTA entry"
+    )
+    group.add_argument(
+        "--max",
+        action="store_true",
+        help="Extract only the largest FASTA entry"
+    )
+    
+    args = parser.parse_args()
+
+    files = args.fasta if args.fasta else None
+    
+    if not files:
+        # Read from stdin
+        if sys.stdin.isatty():
+            parser.error("No input files specified and no data piped to stdin")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.fasta') as tmp:
+            tmp.write(sys.stdin.read())
+            files = [tmp.name]
+            temp_file = tmp.name
+    else:
+        temp_file = None
+
+    # Determine if showing filenames (multiple files in size mode)
+    show_filename = len(files) > 1 and not any([args.min, args.max, args.threshold, args.max_threshold])
+    
+    # Handle output
+    out = open(args.out, "w") if args.out else sys.stdout
+
+    try:
+        for file_path in files:
+            try:
+                fasta = FastaFile(file_path)
+                
+                if not fasta.entries:
+                    sys.stderr.write(f"Warning: No FASTA entries found in {file_path}\n")
+                    continue
+
+                # Apply filters first (if any)
+                entries = fasta.entries
+                
+                if args.threshold:
+                    entries = [e for e in entries if e.seq_len >= args.threshold]
+                
+                if args.max_threshold:
+                    entries = [e for e in entries if e.seq_len <= args.max_threshold]
+                
+                if not entries:
+                    sys.stderr.write(f"Warning: No entries match filter criteria in {file_path}\n")
+                    continue
+
+                # Then apply extraction mode
+                if args.min:
+                    entry = min(entries, key=lambda x: x.seq_len)
+                    out.write(entry.fasta_str(args.width))
+                elif args.max:
+                    entry = max(entries, key=lambda x: x.seq_len)
+                    out.write(entry.fasta_str(args.width))
+                elif args.threshold or args.max_threshold:
+                    # Output all filtered entries
+                    for entry in entries:
+                        out.write(entry.fasta_str(args.width))
+                else:
+                    # Size calculation mode (default)
+                    total = sum(e.seq_len for e in entries)
+                    if show_filename:
+                        out.write(f"{file_path}: {total}\n")
+                    else:
+                        out.write(f"{total}\n")
+                        
+            except FileNotFoundError as e:
+                sys.stderr.write(f"Error: {e}\n")
+                continue
+            except ValueError as e:
+                sys.stderr.write(f"Error: {e}\n")
+                continue
+                
+    except BrokenPipeError:
+        devnull = open('/dev/null', 'w')
+        sys.stdout = devnull
+    finally:
+        if args.out:
+            out.close()
+        # Clean up temp file
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except:
+                pass

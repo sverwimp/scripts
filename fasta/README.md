@@ -34,8 +34,7 @@ Use `fasta-extract -h` for help or `fasta-extract -m` for more details.
 > ```
 
 ### `fasta-size`
-Calculate total sequence length (base pairs) from FASTA files.
-
+Calculate total sequence length or extract/filter FASTA entries by size.
 ```bash
 # Single file (prints size only)
 fasta-size genome.fa
@@ -48,7 +47,21 @@ fasta-size genome1.fa genome2.fa
 
 # From stdin
 cat genome.fa | fasta-size
+
+# Extract smallest entry
+fasta-size --min genome.fa
+
+# Extract largest entry
+fasta-size --max genome.fa
+
+# Extract and save entries >= 1000 bp
+fasta-size --threshold 1000 genome.fa --out large_entries.fa
+
+# Extract entries <= 500 bp
+fasta-size --max-threshold 500 genome.fa
 ```
+
+**Options:** `--min` (smallest entry), `--max` (largest entry), `--threshold SIZE` (entries ≥ SIZE), `--max-threshold SIZE` (entries ≤ SIZE), `-o` (output file), `-w` (line width)
 
 ## Notes
 
