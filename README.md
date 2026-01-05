@@ -7,6 +7,8 @@ A personal collection of standalone, portable command-line utilities for bioinfo
 - **`fasta/`** - Scripts working with FASTA sequence files
 - **`file_formats/`** - Scripts modifying or converting file formats
 
+More information on each script given in the README file in each folder.
+
 ## Installation
 
 ### **Option 1: Install all scripts**
@@ -16,14 +18,15 @@ Clone the repository and run the installer:
 ```bash
 git clone https://github.com/sverwimp/scripts.git
 cd scripts
+chmod +x install.sh
 ./install.sh
 ```
 
 This will:
 - Install all scripts to `~/.scripts` (or a custom directory of your choice)
+- Make all scripts executable
 - Compile any C programs automatically
 - Add the directory to your PATH
-- Make all scripts executable
 
 **Custom installation directory:**
 ```bash
@@ -32,20 +35,41 @@ This will:
 ./install.sh /usr/local/bin     # System-wide (requires sudo)
 ```
 
-**Updating:**
-
-After pulling new changes or adding scripts, simply run the installer again:
-```bash
-git pull
-./install.sh
-```
-
-Only modified or new scripts will be copied. Use `./install.sh -f` to force reinstall everything.
+Use `./install.sh -h` for more information
 
 ### **Option 2: Use individual scripts**
 
 Each script is self-contained. You can copy any single script directly and use it without installing the entire collection.
 
+## Management
+
+Once installed, use the `scripts` command to manage the collection of scripts.
+
+### Usage
+
+`scripts <subcommand>`
+
+| Subcommand         | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `list`             | List all available scripts in your installation directory.           |
+| `info <name>`      | Show metadata (path, executable status, modified date) for a script. |
+| `update`           | Automatically pull the latest changes from GitHub and reinstall.     |
+| `remove <name...>` | Remove specific script(s) by name.                                   |
+| `uninstall-all`    | Remove all scripts, the directory, and clean up your shell's `PATH`. |
+
+
+### Updating
+
+Use the `scripts` update subcommand to automatically clone the repository to a temporary location, run the install script again (keeping current install directory in mind), and remove the local repository.
+
+Or pull new changes manually and simply run the installer again:
+```bash
+git pull
+./install.sh <installation_directory>
+```
+
+Only modified or new scripts will be copied. Use `./install.sh -f` to force reinstall everything.
+
 ## Requirements
 
-Most scripts use standard Unix tools (bash, awk, grep) or Python and should work on Linux/macOS without additional dependencies.
+All scripts use either standard Unix tools (bash, awk, grep), Python, or C (requires zlib) and should work on Linux/macOS without additional dependencies.
