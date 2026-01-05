@@ -48,7 +48,7 @@ def parse_location(loc):
     return parts
 
 
-def format_gff_attrs(feat_type, attrs):
+def format_gff_attrs(feat_type, attrs, remove_translation=False):
     """Format and clean attributes for GFF3 compatibility."""
     gff_attrs = {}
     
@@ -76,7 +76,9 @@ def format_gff_attrs(feat_type, attrs):
         if k in attrs and k not in gff_attrs:
             gff_attrs[k] = attrs[k]
     
-    if "translation" in attrs:
+    if remove_translation:
+        gff_attrs.pop("translation", None)
+    elif "translation" in attrs:
         gff_attrs["translation"] = "".join(attrs["translation"].split())
 
     items = []
@@ -87,7 +89,7 @@ def format_gff_attrs(feat_type, attrs):
         else:
             safe_v = str(v).replace(";", "%3B").replace("=", "%3D").replace("&", "%26").replace(",", "%2C")
         items.append(f"{k}={safe_v}")
-    
+
     return ";".join(items)
 
 
@@ -180,7 +182,7 @@ def parse_genbank(path):
                 record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line).upper())
 
 
-def genbank_to_gff(genbank_path, out):
+def genbank_to_gff(genbank_path, out, remove_translation=False):
     records = list(parse_genbank(genbank_path))
     out.write("##gff-version 3\n")
     out.write("#!Converted from GenBank to Prokka-like GFF by prokkify\n")
@@ -207,7 +209,7 @@ def genbank_to_gff(genbank_path, out):
                 source = method if method else "." #if method else "GenBank"
             
             locs = parse_location(feat["loc"])
-            attr_str = format_gff_attrs(feat["type"], feat["attrs"])
+            attr_str = format_gff_attrs(feat["type"], feat["attrs"], remove_translation=remove_translation)
             for start, end, strand in locs:
                 out.write(f"{rec['seqid']}\t{source}\t{feat['type']}\t{start}\t{end}\t.\t{strand}\t0\t{attr_str}\n")
     out.write("##FASTA\n")
@@ -263,6 +265,8 @@ def main():
     parser.add_argument("--genbank", help="Input GenBank file")
     parser.add_argument("--gff", help="Input GFF file")
     parser.add_argument("--fasta", help="Input FASTA file")
+    parser.add_argument("--remove-translation", action="store_true",
+                        help="Remove 'translation' attribute from output GFF build using --genbank input")
     parser.add_argument("--out", help="Output GFF file (default: stdout)")
 
     args = parser.parse_args() 
@@ -271,16 +275,21 @@ def main():
     if args.genbank and (args.gff or args.fasta):
         print("Warning: only one of --genbank or --gff/--fasta should be provided.")
         print("Proceeding with --genbank input.")
-    if args.genbank:
-        genbank_to_gff(args.genbank, out)
-    elif args.gff and args.fasta:
-        gff_fasta_to_gff(args.gff, args.fasta, out)
-    else:
-        parser.print_help()
-        sys.exit(1)
-
-    if args.out: out.close()
-    sys.exit(0)
+    
+    try:
+        if args.genbank:
+            genbank_to_gff(args.genbank, out, remove_translation=args.remove_translation)
+        elif args.gff and args.fasta:
+            gff_fasta_to_gff(args.gff, args.fasta, out)
+        else:
+            parser.print_help()
+            sys.exit(1)
+    except BrokenPipeError:
+        devnull = open('/dev/null', 'w')
+        sys.stdout = devnull
+    finally:
+        if args.out: out.close()
+        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ Create a Prokka-like GFF3 file with embedded FASTA sequence(s) from common genom
 Coverts either a **Genbank** file or a combination of a **GFF3 and FASTA** file into a single GFF3 file containing a `##FASTA` section, suitable for downstream tools that expect Prokka-style input.
 
 ```bash
-prokkify --genbank genome.gbk --out genome.gff
+prokkify --genbank genome.gbk(.gz|bz2) --out genome.gff
 prokkify --gff annotations.gff --fasta genome.fna --out genome.gff
 
 # Without --out, the output will print to the standard output
