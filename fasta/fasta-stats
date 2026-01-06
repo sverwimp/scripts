@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+
+import argparse
+import bz2
+import gzip
+import json
+import os
+import sys
+import tempfile
+from collections import Counter
+from typing import Any
+
+
+def is_gzipped(path):
+    """Check if file is gzip compressed."""
+    with open(path, "rb") as f:
+        return f.read(2) == b"\x1f\x8b"
+
+
+def is_bzipped(path):
+    """Check if file is bzip2 compressed."""
+    with open(path, "rb") as f:
+        return f.read(3) == b"BZh"
+
+
+def open_file(path, mode="rt"):
+    """Open file with appropriate decompression if needed."""
+    if is_gzipped(path):
+        return gzip.open(path, mode)
+    elif is_bzipped(path):
+        return bz2.open(path, mode)
+    return open(path, mode)
+
+
+class FastaEntry:
+    """Represents a single FASTA entry with header and sequence."""
+    
+    def __init__(self, header: str, sequence: list[str]):
+        self.header: str = header
+        self.sequence: str = self.clean_sequence(sequence)
+        self.seq_len: int = len(self.sequence)
+
+    def clean_sequence(self, sequence: list[str]) -> str:
+        """Remove whitespace and join sequence lines."""
+        return "".join(sequence).replace(" ", "").replace("\n", "")
+
+
+class FastaFile:
+    """Parser and handler for FASTA files."""
+    
+    def __init__(self, path: str):
+        self.path = path
+        self.entries = []
+        self._parse_file()
+
+    def _parse_file(self):
+        """Parse FASTA file and store entries."""
+        if not os.path.exists(self.path):
+            raise FileNotFoundError(f"Cannot find file: {self.path}")
+        
+        header = None
+        sequence = []
+        
+        with open_file(self.path, "rt") as f:
+            for line in f:
+                line = line.rstrip()
+                if line.startswith(">"):
+                    if header:
+                        self.add_fasta_entry(header, sequence)
+                    header = line[1:].strip()
+                    sequence = []
+                else:
+                    sequence.append(line.strip().upper())
+            
+            if header:
+                self.add_fasta_entry(header, sequence)
+
+    def add_fasta_entry(self, header: str, sequence: list[str]):
+        """Create and append a FastaEntry to the entries list."""
+        entry = FastaEntry(header=header, sequence=sequence)
+        self.entries.append(entry)
+
+
+class FastaStats:
+    """Calculate statistics for a FASTA file."""
+    
+    def __init__(self, fasta_file: FastaFile, include_composition: bool = False, 
+                 include_gaps: bool = False):
+        self.fasta = fasta_file
+        self.include_composition = include_composition
+        self.include_gaps = include_gaps
+        self.stats = self._calculate_stats()
+    
+    def _detect_sequence_type(self) -> str:
+        """Detect if sequences are nucleotide or protein."""
+        if not self.fasta.entries:
+            return "unknown"
+        
+        # Sample first few sequences
+        sample_size = min(10, len(self.fasta.entries))
+        sample_seqs = [self.fasta.entries[i].sequence for i in range(sample_size)]
+        all_chars = set("".join(sample_seqs))
+        
+        nucleotide_chars = set("ATCGUN-")
+        protein_chars = set("ACDEFGHIKLMNPQRSTVWY*-")
+        
+        if all_chars.issubset(nucleotide_chars):
+            return "nucleotide"
+        elif all_chars.issubset(protein_chars):
+            return "protein"
+        else:
+            return "mixed"
+    
+    def _calculate_n50(self, lengths: list[int]) -> int:
+        """Calculate N50 value."""
+        sorted_lengths = sorted(lengths, reverse=True)
+        total_length = sum(sorted_lengths)
+        target = total_length / 2
+        
+        cumsum = 0
+        for length in sorted_lengths:
+            cumsum += length
+            if cumsum >= target:
+                return length
+        return 0
+    
+    def _calculate_gc_content(self) -> float:
+        """Calculate GC content percentage."""
+        gc_count = 0
+        total_count = 0
+        
+        for entry in self.fasta.entries:
+            seq = entry.sequence
+            gc_count += seq.count('G') + seq.count('C')
+            total_count += sum(1 for c in seq if c in 'ATCG')
+        
+        return (gc_count / total_count * 100) if total_count > 0 else 0.0
+    
+    def _calculate_composition(self) -> dict[str, int]:
+        """Calculate nucleotide/amino acid composition."""
+        composition = Counter()
+        for entry in self.fasta.entries:
+            composition.update(entry.sequence)
+        return dict(composition)
+    
+    def _calculate_gap_stats(self) -> dict[str, Any]:
+        """Calculate gap and N statistics."""
+        gap_count = 0
+        total_length = 0
+        
+        stats = {}
+        
+        for entry in self.fasta.entries:
+            seq = entry.sequence
+            gap_count += seq.count('-')
+            total_length += len(seq)
+        
+        stats['gap_count'] = gap_count
+        stats['gap_percentage'] = (gap_count / total_length * 100) if total_length > 0 else 0.0
+        
+        # Only count N's for nucleotide sequences (N is ambiguous base)
+        # For proteins, N is asparagine (regular amino acid)
+        seq_type = self._detect_sequence_type()
+        if seq_type == "nucleotide":
+            n_count = 0
+            for entry in self.fasta.entries:
+                n_count += entry.sequence.count('N')
+            
+            stats['n_count'] = n_count
+            stats['n_percentage'] = (n_count / total_length * 100) if total_length > 0 else 0.0
+        
+        return stats
+    
+    def _calculate_stats(self) -> dict[str, Any]:
+        """Calculate all statistics."""
+        if not self.fasta.entries:
+            return {}
+        
+        lengths = [entry.seq_len for entry in self.fasta.entries]
+        seq_type = self._detect_sequence_type()
+        
+        stats = {
+            'filename': os.path.basename(self.fasta.path),
+            'sequence_type': seq_type,
+            'num_sequences': len(self.fasta.entries),
+            'total_length': sum(lengths),
+            'mean_length': round(sum(lengths) / len(lengths), 2),
+            'median_length': sorted(lengths)[len(lengths) // 2],
+            'min_length': min(lengths),
+            'max_length': max(lengths),
+            'std_dev': round(self._calculate_std_dev(lengths), 2)
+        }
+        
+        # Add N50 for nucleotide sequences
+        if seq_type == "nucleotide":
+            stats['n50'] = self._calculate_n50(lengths)
+            stats['gc_content'] = round(self._calculate_gc_content(), 2)
+        
+        # Optional: composition
+        if self.include_composition:
+            stats['composition'] = self._calculate_composition()
+        
+        # Optional: gap stats
+        if self.include_gaps:
+            gap_stats = self._calculate_gap_stats()
+            # Round percentages that exist
+            if 'n_percentage' in gap_stats:
+                gap_stats['n_percentage'] = round(gap_stats['n_percentage'], 2)
+            if 'gap_percentage' in gap_stats:
+                gap_stats['gap_percentage'] = round(gap_stats['gap_percentage'], 2)
+            stats.update(gap_stats)
+        
+        return stats
+    
+    def _calculate_std_dev(self, values: list[int]) -> float:
+        """Calculate standard deviation."""
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+        return variance ** 0.5
+    
+    def format_human_readable(self) -> str:
+        """Format statistics as human-readable text."""
+        s = self.stats
+        output = []
+        
+        # Determine unit based on sequence type
+        unit = "bp" if s['sequence_type'] == "nucleotide" else "aa"
+        
+        output.append(f"File:\t\t\t{s['filename']}")
+        output.append(f"Sequence type:\t\t{s['sequence_type']}")
+        output.append(f"Number of sequences:\t{s['num_sequences']}")
+        output.append(f"Total length ({unit}):\t{s['total_length']}")
+        output.append(f"Mean length ({unit}):\t{s['mean_length']:.1f}")
+        output.append(f"Median length ({unit}):\t{s['median_length']}")
+        output.append(f"Std deviation ({unit}):\t{s['std_dev']:.1f}")
+        output.append(f"Min length ({unit}):\t{s['min_length']}")
+        output.append(f"Max length ({unit}):\t{s['max_length']}")
+        
+        if 'n50' in s:
+            output.append(f"N50 ({unit}):\t\t{s['n50']}")
+        
+        if 'gc_content' in s:
+            output.append(f"GC content:\t\t{s['gc_content']:.2f}%")
+        
+        if self.include_gaps and 'n_count' in s:
+            output.append(f"\nGap Statistics:")
+            output.append(f"  N count:\t\t{s['n_count']} ({s['n_percentage']:.2f}%)")
+            output.append(f"  Gap count:\t\t{s['gap_count']} ({s['gap_percentage']:.2f}%)")
+        elif self.include_gaps and 'gap_count' in s:
+            output.append(f"\nGap Statistics:")
+            output.append(f"  Gap count:\t\t{s['gap_count']} ({s['gap_percentage']:.2f}%)")
+        
+        if self.include_composition and 'composition' in s:
+            output.append(f"\nComposition:")
+            for char, count in sorted(s['composition'].items()):
+                pct = (count / s['total_length'] * 100)
+                output.append(f"  {char}: {count:>12}\t({pct:>5.2f}%)")
+        
+        return "\n".join(output)
+
+
+def format_tsv_header(include_composition: bool, include_gaps: bool, seq_type: str, composition_chars: set = None) -> str:
+    """Generate TSV header."""
+    fields = [
+        "filename", "sequence_type", "num_sequences", "total_length",
+        "mean_length", "median_length", "std_dev", "min_length", "max_length"
+    ]
+    
+    if seq_type == "nucleotide":
+        fields.extend(["n50", "gc_content"])
+    
+    if include_gaps:
+        fields.extend(["n_count", "n_percentage", "gap_count", "gap_percentage"])
+    
+    if include_composition and composition_chars:
+        for char in sorted(composition_chars):
+            fields.append(f"comp_{char}")
+    
+    return "\t".join(fields)
+
+
+def format_tsv_row(stats: dict[str, Any], include_gaps: bool, include_composition: bool, composition_chars: set = None) -> str:
+    """Format statistics as TSV row."""
+    s = stats
+    values = [
+        s['filename'],
+        s['sequence_type'],
+        str(s['num_sequences']),
+        str(s['total_length']),
+        f"{s['mean_length']:.2f}",
+        str(s['median_length']),
+        f"{s['std_dev']:.2f}",
+        str(s['min_length']),
+        str(s['max_length'])
+    ]
+    
+    if 'n50' in s:
+        values.append(str(s['n50']))
+        values.append(f"{s['gc_content']:.2f}")
+    
+    if include_gaps and 'n_count' in s:
+        values.extend([
+            str(s['n_count']),
+            f"{s['n_percentage']:.2f}",
+            str(s['gap_count']),
+            f"{s['gap_percentage']:.2f}"
+        ])
+    
+    if include_composition and 'composition' in s and composition_chars:
+        composition = s['composition']
+        for char in sorted(composition_chars):
+            values.append(str(composition.get(char, 0)))
+    
+    return "\t".join(values)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Calculate statistics for FASTA files",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "fasta",
+        nargs="*",
+        help="Input FASTA file(s) (can be gzipped or bzipped). If not provided, reads from stdin."
+    )
+    parser.add_argument(
+        "-o", "--out",
+        help="Output file (default: stdout)"
+    )
+    parser.add_argument(
+        "--composition",
+        action="store_true",
+        help="Include nucleotide/amino acid composition"
+    )
+    parser.add_argument(
+        "--gaps",
+        action="store_true",
+        help="Include N-count and gap statistics"
+    )
+    
+    # Output format group
+    format_group = parser.add_mutually_exclusive_group()
+    format_group.add_argument(
+        "--tsv",
+        action="store_true",
+        help="Output in TSV format"
+    )
+    format_group.add_argument(
+        "--csv",
+        action="store_true",
+        help="Output in CSV format"
+    )
+    format_group.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format"
+    )
+    
+    args = parser.parse_args()
+
+    files = args.fasta if args.fasta else None
+    
+    if not files:
+        if sys.stdin.isatty():
+            parser.error("No input files specified and no data piped to stdin")
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.fasta') as tmp:
+            tmp.write(sys.stdin.read())
+            files = [tmp.name]
+            temp_file = tmp.name
+    else:
+        temp_file = None
+
+    out = open(args.out, "w") if args.out else sys.stdout
+
+    # Determine output format
+    multiple_files = len(files) > 1
+    if args.json:
+        output_format = "json"
+    elif args.csv:
+        output_format = "csv"
+    elif args.tsv or multiple_files:
+        output_format = "tsv"
+    else:
+        output_format = "human"
+
+    try:
+        all_stats = []
+        first_seq_type = None
+        
+        for file_path in files:
+            try:
+                fasta = FastaFile(file_path)
+                
+                if not fasta.entries:
+                    sys.stderr.write(f"Warning: No FASTA entries found in {file_path}\n")
+                    continue
+                
+                stats_obj = FastaStats(fasta, 
+                                       include_composition=args.composition,
+                                       include_gaps=args.gaps)
+                all_stats.append(stats_obj)
+                
+                if first_seq_type is None:
+                    first_seq_type = stats_obj.stats.get('sequence_type', 'unknown')
+                
+            except FileNotFoundError as e:
+                sys.stderr.write(f"Error: {e}\n")
+                continue
+            except Exception as e:
+                sys.stderr.write(f"Error processing {file_path}: {e}\n")
+                continue
+        
+        if not all_stats:
+            sys.stderr.write("Error: No valid FASTA files processed\n")
+            sys.exit(1)
+        
+        # Collect all composition characters if needed
+        composition_chars = set()
+        if args.composition:
+            for stats_obj in all_stats:
+                if 'composition' in stats_obj.stats:
+                    composition_chars.update(stats_obj.stats['composition'].keys())
+        
+        # Output results
+        if output_format == "json":
+            output_data = [s.stats for s in all_stats]
+            out.write(json.dumps(output_data, indent=2))
+            out.write("\n")
+        
+        elif output_format == "csv":
+            header = format_tsv_header(args.composition, args.gaps, first_seq_type, composition_chars)
+            out.write(header.replace("\t", ",") + "\n")
+            
+            for stats_obj in all_stats:
+                row = format_tsv_row(stats_obj.stats, args.gaps, args.composition, composition_chars)
+                out.write(row.replace("\t", ",") + "\n")
+        
+        elif output_format == "tsv": # default when multiple files
+            header = format_tsv_header(args.composition, args.gaps, first_seq_type, composition_chars)
+            out.write(header + "\n")
+            
+            for stats_obj in all_stats:
+                row = format_tsv_row(stats_obj.stats, args.gaps, args.composition, composition_chars)
+                out.write(row + "\n")
+        
+        else:  # human readable
+            out.write(all_stats[0].format_human_readable())
+            out.write("\n")
+                
+    except BrokenPipeError:
+        devnull = open('/dev/null', 'w')
+        sys.stdout = devnull
+    finally:
+        if args.out:
+            out.close()
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+
+
+if __name__ == "__main__":
+    main()

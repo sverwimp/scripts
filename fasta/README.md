@@ -19,6 +19,9 @@ fasta-extract -l ids.txt genome.faa
 
 # Count matches only
 fasta-extract -c 'mitochondria' genome.fa
+
+# Working with gzipped data
+zcat genome.fa | fasta-extract 'search-term'
 ```
 
 **Options:** `-i` (case-insensitive), `-r` (regex), `-x` (exact ID), `-l` (list file), `-v` (invert), `-n` (names only), `-c` (count)
@@ -35,6 +38,7 @@ Use `fasta-extract -h` for help or `fasta-extract -m` for more details.
 
 ### `fasta-size`
 Calculate total sequence length or extract/filter FASTA entries by size.
+
 ```bash
 # Single file (prints size only)
 fasta-size genome.fa
@@ -63,9 +67,47 @@ fasta-size --max-threshold 500 genome.fa
 
 **Options:** `--min` (smallest entry), `--max` (largest entry), `--threshold SIZE` (entries ≥ SIZE), `--max-threshold SIZE` (entries ≤ SIZE), `-o` (output file), `-w` (line width)
 
+### `fasta-stats`
+Calculate comprehensive statistics for FASTA files.
+
+```bash
+# Single file (human-readable output)
+fasta-stats genome.fa
+
+# Multiple files (automatic TSV format)
+fasta-stats *.fa
+
+# Include nucleotide/amino acid composition
+fasta-stats --composition genome.fa
+
+# Include gap and N-count statistics
+fasta-stats --gaps genome.fa
+
+# Output as JSON
+fasta-stats genome.fa --json
+
+# Multiple files to CSV
+fasta-stats *.fa --csv > stats.csv
+
+# All statistics with composition and gaps
+fasta-stats --composition --gaps genome.fa
+```
+
+**Default Statistics:**
+- Sequence type (auto-detected: nucleotide/protein/mixed; checks only first 10 fasta entries)
+- Number of sequences
+- Total, mean, median, min, max lengths
+- Standard deviation
+- N50 (nucleotides only)
+- GC content (nucleotides only)
+
+> [!NOTE]
+> Single file input produces human-readable text output. Multiple files automatically switch to tabular (TSV) format unless a specific format is specified.
+
+Can process multiple files from `find` using `xargs`: `find . -name "*.fa" | xargs fasta-stats`
+
 ## Notes
 
 All scripts:
 - Accept input from files or stdin
 - Include `-h` flag for help documentation
-- Handle gzipped files when piped through zcat
