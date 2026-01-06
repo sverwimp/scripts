@@ -145,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("genbank", nargs="?", help="Input GenBank file (can be gzipped or bzipped). If not provided, reads from stdin.")
     parser.add_argument("-p", "--protein", action="store_true", help="Output protein sequences instead of nucleotide sequences")
     parser.add_argument("-o", "--out", help="Output FASTA file (default: stdout)")
+    parser.add_argument("-w", "--width", type=int, default=60, help="Line width for FASTA output (default: 60)")
     args = parser.parse_args()
 
     if args.genbank:
@@ -159,7 +160,7 @@ if __name__ == "__main__":
     try:
         results = main(input_path, args.protein)
         for result in results:
-            out.write(write_fasta(result))
+            out.write(write_fasta(result, width=args.width))
     except BrokenPipeError:
         devnull = open('/dev/null', 'w')
         sys.stdout = devnull
