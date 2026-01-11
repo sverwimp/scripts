@@ -5,6 +5,7 @@ A personal collection of standalone, portable command-line utilities for bioinfo
 ## Categories
 
 - **`fasta/`** - Scripts working with FASTA sequence files
+- **`fastq/`** - Scripts working with FASTQ files
 - **`file_formats/`** - Scripts modifying or converting file formats
 
 More information on each script given in the README file in each folder.
