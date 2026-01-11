@@ -106,6 +106,25 @@ fasta-stats --composition --gaps genome.fa
 
 Can process multiple files from `find` using `xargs`: `find . -name "*.fa" | xargs fasta-stats`
 
+
+### `fasta-wrap`
+
+Wrap or unwrap FASTA sequence lines to a specified width.
+
+```bash
+# Default 60 character wrapping
+fasta-wrap genome.fa
+
+# Custom width (80 characters)
+fasta-wrap -w 80 genome.fa
+
+# Unwrap sequences to single lines
+fasta-wrap -0 genome.fa
+
+# From stdin
+zcat genome.fa | fasta-wrap -w 80 | gzip > genome_wrapped.fa.gz
+```
+
 ## Notes
 
 All scripts:
