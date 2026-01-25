@@ -8,22 +8,22 @@ import os
 import sys
 import tempfile
 from collections import Counter
-from typing import Any
+from typing import Any, List, Dict
 
 
-def is_gzipped(path):
+def is_gzipped(path: str) -> bool:
     """Check if file is gzip compressed."""
     with open(path, "rb") as f:
         return f.read(2) == b"\x1f\x8b"
 
 
-def is_bzipped(path):
+def is_bzipped(path: str) -> bool:
     """Check if file is bzip2 compressed."""
     with open(path, "rb") as f:
         return f.read(3) == b"BZh"
 
 
-def open_file(path, mode="rt"):
+def open_file(path: str, mode: str = "rt"):
     """Open file with appropriate decompression if needed."""
     if is_gzipped(path):
         return gzip.open(path, mode)
@@ -35,12 +35,12 @@ def open_file(path, mode="rt"):
 class FastaEntry:
     """Represents a single FASTA entry with header and sequence."""
     
-    def __init__(self, header: str, sequence: list[str]):
+    def __init__(self, header: str, sequence: List[str]):
         self.header: str = header
         self.sequence: str = self.clean_sequence(sequence)
         self.seq_len: int = len(self.sequence)
 
-    def clean_sequence(self, sequence: list[str]) -> str:
+    def clean_sequence(self, sequence: List[str]) -> str:
         """Remove whitespace and join sequence lines."""
         return "".join(sequence).replace(" ", "").replace("\n", "")
 
@@ -75,7 +75,7 @@ class FastaFile:
             if header:
                 self.add_fasta_entry(header, sequence)
 
-    def add_fasta_entry(self, header: str, sequence: list[str]):
+    def add_fasta_entry(self, header: str, sequence: List[str]):
         """Create and append a FastaEntry to the entries list."""
         entry = FastaEntry(header=header, sequence=sequence)
         self.entries.append(entry)
@@ -84,7 +84,8 @@ class FastaFile:
 class FastaStats:
     """Calculate statistics for a FASTA file."""
     
-    def __init__(self, fasta_file: FastaFile, include_composition: bool = False, 
+    def __init__(self, fasta_file: FastaFile, 
+                 include_composition: bool = False, 
                  include_gaps: bool = False):
         self.fasta = fasta_file
         self.include_composition = include_composition
@@ -111,7 +112,7 @@ class FastaStats:
         else:
             return "mixed"
     
-    def _calculate_n50(self, lengths: list[int]) -> int:
+    def _calculate_n50(self, lengths: List[int]) -> int:
         """Calculate N50 value."""
         sorted_lengths = sorted(lengths, reverse=True)
         total_length = sum(sorted_lengths)
@@ -136,14 +137,14 @@ class FastaStats:
         
         return (gc_count / total_count * 100) if total_count > 0 else 0.0
     
-    def _calculate_composition(self) -> dict[str, int]:
+    def _calculate_composition(self) -> Dict[str, int]:
         """Calculate nucleotide/amino acid composition."""
         composition = Counter()
         for entry in self.fasta.entries:
             composition.update(entry.sequence)
         return dict(composition)
     
-    def _calculate_gap_stats(self) -> dict[str, Any]:
+    def _calculate_gap_stats(self) -> Dict[str, Any]:
         """Calculate gap and N statistics."""
         gap_count = 0
         total_length = 0
@@ -171,7 +172,7 @@ class FastaStats:
         
         return stats
     
-    def _calculate_stats(self) -> dict[str, Any]:
+    def _calculate_stats(self) -> Dict[str, Any]:
         """Calculate all statistics."""
         if not self.fasta.entries:
             return {}
@@ -212,7 +213,7 @@ class FastaStats:
         
         return stats
     
-    def _calculate_std_dev(self, values: list[int]) -> float:
+    def _calculate_std_dev(self, values: List[int]) -> float:
         """Calculate standard deviation."""
         if len(values) < 2:
             return 0.0
@@ -281,7 +282,7 @@ def format_tsv_header(include_composition: bool, include_gaps: bool, seq_type: s
     return "\t".join(fields)
 
 
-def format_tsv_row(stats: dict[str, Any], include_gaps: bool, include_composition: bool, composition_chars: set = None) -> str:
+def format_tsv_row(stats: Dict[str, Any], include_gaps: bool, include_composition: bool, composition_chars: set = None) -> str:
     """Format statistics as TSV row."""
     s = stats
     values = [

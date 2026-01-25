@@ -5,19 +5,19 @@ import bz2
 import gzip
 import sys
 import re
+from typing import Tuple
 
-
-def is_gzipped(path):
+def is_gzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(2) == b"\x1f\x8b"
     
 
-def is_bzipped(path):
+def is_bzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(3) == b"BZh"
 
 
-def open_file(path, mode="rt"):
+def open_file(path: str, mode: str = "rt"):
     if is_gzipped(path):
         return gzip.open(path, mode)
     elif is_bzipped(path):
@@ -25,7 +25,7 @@ def open_file(path, mode="rt"):
     return open(path, mode)
 
 
-def write_fasta(data: tuple, width: int = 60) -> str:
+def write_fasta(data: Tuple[str, str], width: int = 60) -> str:
     """Takes a (header, sequence) tuple and returns a FASTA formatted string."""
     header, sequence = data
     fasta_str = f">{header}\n"
@@ -34,7 +34,7 @@ def write_fasta(data: tuple, width: int = 60) -> str:
     return fasta_str
 
 
-def parse_nucleotide(path):
+def parse_nucleotide(path: str):
     record = {"seqid": None, "sequence": []}
     state = "HEADER"
     for line in open_file(path, "rt"):
@@ -53,7 +53,7 @@ def parse_nucleotide(path):
             record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line).upper())
 
 
-def parse_protein(path):
+def parse_protein(path: str):
     """Assumes each CDS feature has a 'translation' attribute!"""
     record = {"seqid": None, "features": [], "sequence": []}
     current_feat = None

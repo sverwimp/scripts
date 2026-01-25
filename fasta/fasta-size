@@ -6,19 +6,20 @@ import gzip
 import os
 import sys
 import tempfile
+from typing  import List, Tuple
 
 
-def is_gzipped(path):
+def is_gzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(2) == b"\x1f\x8b"
     
 
-def is_bzipped(path):
+def is_bzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(3) == b"BZh"
 
 
-def open_file(path, mode="rt"):
+def open_file(path: str, mode: str = "rt"):
     if is_gzipped(path):
         return gzip.open(path, mode)
     elif is_bzipped(path):
@@ -26,7 +27,7 @@ def open_file(path, mode="rt"):
     return open(path, mode)
 
 
-def write_fasta(data: tuple, width: int = 60) -> str:
+def write_fasta(data: Tuple[str, str], width: int = 60) -> str:
     """Takes a (header, sequence) tuple and returns a FASTA formatted string."""
     header, sequence = data
     fasta_str = f">{header}\n"
@@ -38,12 +39,12 @@ def write_fasta(data: tuple, width: int = 60) -> str:
 class FastaEntry:
     """Represents a single FASTA entry with header and sequence."""
     
-    def __init__(self, header: str, sequence: list[str]):
+    def __init__(self, header: str, sequence: List[str]):
         self.header: str = header
         self.sequence: str = self.clean_sequence(sequence)
         self.seq_len: int = len(self.sequence)
 
-    def clean_sequence(self, sequence: list[str]) -> str:
+    def clean_sequence(self, sequence: List[str]) -> str:
         """Remove whitespace and join sequence lines."""
         return "".join(sequence).replace(" ", "").replace("\n", "")
 
@@ -82,7 +83,7 @@ class FastaFile:
             if header:
                 self.add_fasta_entry(header, sequence)
 
-    def add_fasta_entry(self, header: str, sequence: list[str]):
+    def add_fasta_entry(self, header: str, sequence: List[str]):
         entry = FastaEntry(header=header, sequence=sequence)
         self.entries.append(entry)
 

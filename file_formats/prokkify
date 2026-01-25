@@ -5,19 +5,20 @@ import bz2
 import gzip
 import re
 import sys
+from typing import List, Tuple
 
 
-def is_gzipped(path):
+def is_gzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(2) == b"\x1f\x8b"
     
 
-def is_bzipped(path):
+def is_bzipped(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(3) == b"BZh"
 
 
-def open_file(path, mode="rt"):
+def open_file(path: str, mode: str = "rt"):
     if is_gzipped(path):
         return gzip.open(path, mode)
     elif is_bzipped(path):
@@ -25,14 +26,14 @@ def open_file(path, mode="rt"):
     return open(path, mode)
 
 
-def clean_id(identifier):
+def clean_id(identifier: str) -> str:
     """Strips NCBI prefixes like lcl| or gnl| for matching."""
     if "|" in identifier:
         return identifier.split("|")[-1]
     return identifier
 
 
-def parse_location(loc):
+def parse_location(loc: str) -> List[Tuple[str, str, str]]:
     """Parses GenBank locations into GFF coordinates and strand."""
     strand = "-" if "complement" in loc else "+"
     core = loc.replace("complement(", "").replace("join(", "")
@@ -48,7 +49,7 @@ def parse_location(loc):
     return parts
 
 
-def format_gff_attrs(feat_type, attrs, remove_translation=False):
+def format_gff_attrs(feat_type: str, attrs: dict, remove_translation: bool = False) -> str:
     """Format and clean attributes for GFF3 compatibility."""
     gff_attrs = {}
     
@@ -93,7 +94,7 @@ def format_gff_attrs(feat_type, attrs, remove_translation=False):
     return ";".join(items)
 
 
-def extract_method_from_note(note):
+def extract_method_from_note(note: str) -> str:
     """Extract prediction method from PGAP-style notes."""
     if not note:
         return None
@@ -104,7 +105,7 @@ def extract_method_from_note(note):
     return None
 
 
-def parse_genbank(path):
+def parse_genbank(path: str):
     """Generator yielding contig records from a GenBank file.
 
     Result dictionary structure:
@@ -182,8 +183,10 @@ def parse_genbank(path):
                 record["sequence"].append(re.sub(r"[^acgtACGTnN]", "", line).upper())
 
 
-def genbank_to_gff(genbank_path, out, remove_translation=False):
-    records = list(parse_genbank(genbank_path))
+def genbank_to_gff(genbank_path: str, out, remove_translation: bool = False):
+    """Convert GenBank to Prokka-like GFF format."""
+    records = list(parse_genbank(genbank_path)) # materialize for second pass (FASTA)
+
     out.write("##gff-version 3\n")
     out.write("#!Converted from GenBank to Prokka-like GFF by prokkify\n")
     for rec in records:
@@ -212,6 +215,7 @@ def genbank_to_gff(genbank_path, out, remove_translation=False):
             attr_str = format_gff_attrs(feat["type"], feat["attrs"], remove_translation=remove_translation)
             for start, end, strand in locs:
                 out.write(f"{rec['seqid']}\t{source}\t{feat['type']}\t{start}\t{end}\t.\t{strand}\t0\t{attr_str}\n")
+
     out.write("##FASTA\n")
     for rec in records:
         out.write(f">{rec['seqid']}\n")
@@ -219,7 +223,7 @@ def genbank_to_gff(genbank_path, out, remove_translation=False):
             out.write(rec['sequence'][i:i+60] + "\n")
 
 
-def gff_fasta_to_gff(gff_path, fasta_path, out):
+def gff_fasta_to_gff(gff_path: str, fasta_path: str, out):
     """Convert GFF + FASTA to Prokka-like GFF format.
     Extracts sequences from the FASTA and appends them to a copy of the existing GFF.
     """
