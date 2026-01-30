@@ -24,9 +24,9 @@ fasta-extract -c 'mitochondria' genome.fa
 zcat genome.fa | fasta-extract 'search-term'
 ```
 
-**Options:** `-i` (case-insensitive), `-r` (regex), `-x` (exact ID), `-l` (list file), `-v` (invert), `-n` (names only), `-c` (count)
+**Options:** `-i` (case-insensitive), `-r` (regex), `-x` (exact ID), `-l` (list file), `-v` (invert), `-n` (names only), `-c` (count), `-m` (max number of matches to report)
 
-Use `fasta-extract -h` for help or `fasta-extract -m` for more details.
+Use `fasta-extract -h` for help.
 
 > [!TIP]
 > If you only have a few patterns, you don't need a list file. Use the regex pipe `|` to match multiple items:
