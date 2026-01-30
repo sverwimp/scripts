@@ -6,6 +6,7 @@ EXACT_ID=0
 INVERT_MATCH=0
 NAMES_ONLY=0
 COUNT_ONLY=0
+MAX_MATCHES=0
 LIST_FILE=""
 
 ##################
@@ -22,11 +23,11 @@ show_help() {
     echo "  -l FILE  List mode: Read search patterns from FILE (one per line)"
     echo "  -i       Case-insensitive search (applies to regex, exact, and list)"
     echo "  -r       Treat search pattern as a Regular Expression"
-    echo "  -x       Exact match on Sequence ID only (ignore description)"
+    echo "  -x       Exact match on Sequence ID only (ignores header description)"
     echo "  -v       Invert match (extract sequences that do NOT match)"
     echo "  -n       Names only (print headers only, no sequences)"
     echo "  -c       Count only (print number of matches)"
-    echo "  -m       Show extended manual (examples & logic)"
+    echo "  -m N     Maximum number of matches to return (0 = unlimited, default)"
     echo "  -h       Show this help message"
     echo
     echo "Quick Examples:"
@@ -35,51 +36,12 @@ show_help() {
     echo "  $cmd -r '(chr1|chr2)$' data.fa      # Regex OR (matches chr1 or chr2)"
 }
 
-show_manual() {
-    echo "--- $(basename "$0") EXTENDED MANUAL ---"
-    echo
-    echo "1. EXAMPLE COMBINATIONS"
-    echo "   - Case-Insensitive Regex (-i -r):"
-    echo "     $ $(basename "$0") -i -r '^mitochondria' genome.fa"
-    echo "     Matches 'Mitochondria', 'MITOCHONDRIA', etc., at the start of the line."
-    echo
-    echo "   - Count Exact Matches (-c -x):"
-    echo "     $ $(basename "$0") -c -x 'chr1' genome.fa"
-    echo "     Returns a single number. Matches '>chr1' but NOT '>chr10' or '>chr1 desc'."
-    echo
-    echo "   - Invert List Match (-v -l):"
-    echo "     $ $(basename "$0") -v -l bad_contigs.txt genome.fa"
-    echo "     Extracts everything EXCEPT sequences matching patterns in 'bad_contigs.txt'."
-    echo
-    echo "2. LIST MODE (-l)"
-    echo "   List mode treats each line as a separate search pattern."
-    echo "   It respects all other flags (-i, -r, -x) just like standard mode."
-    echo "   A sequence matches if ANY pattern in the list matches (OR logic)."
-    echo
-    echo "   Examples:"
-    echo "     $ $(basename "$0") -l patterns.txt genome.fa"
-    echo "     $ $(basename "$0") -i -l patterns.txt genome.fa    # Case-insensitive"
-    echo "     $ $(basename "$0") -x -l ids.txt genome.fa         # Exact ID matching"
-    echo
-    echo "3. LIST FILE FORMAT (-l)"
-    echo "   - Plain text, one pattern per line."
-    echo "   - Empty lines and lines starting with '#' are ignored."
-    echo "   - Trailing spaces are automatically trimmed."
-    echo
-    echo "4. REGEX OR OPERATOR (Alternative to Lists)"
-    echo "   If you only have a few patterns, you don't need a list file."
-    echo "   Use the regex pipe '|' to match multiple items:"
-    echo "     $ $(basename "$0") -r '(chr1|chrX|chrY)' genome.fa"
-    echo "     $ $(basename "$0") -r 'contig_[0-9]+' genome.fa"
-    echo
-    exit 0
-}
 
 ####################
 # ARGUMENT PARSING #
 ####################
 
-while getopts "irxvnhcml:" opt; do
+while getopts "irxvnhcm:l:" opt; do
     case "$opt" in
         i) IGNORE_CASE=1 ;;
         r) USE_REGEX=1 ;;
@@ -87,8 +49,8 @@ while getopts "irxvnhcml:" opt; do
         v) INVERT_MATCH=1 ;;
         n) NAMES_ONLY=1 ;;
         c) COUNT_ONLY=1 ;;
+        m) MAX_MATCHES="$OPTARG" ;;
         l) LIST_FILE="$OPTARG" ;;
-        m) show_manual ;;
         h) show_help; exit 0 ;;
         *) show_help >&2; exit 1 ;;
     esac
@@ -155,7 +117,8 @@ awk -v pattern="$SEARCH_PATTERN" \
     -v exact_id="$EXACT_ID" \
     -v invert="$INVERT_MATCH" \
     -v names_only="$NAMES_ONLY" \
-    -v count_mode="$COUNT_ONLY" '
+    -v count_mode="$COUNT_ONLY" \
+    -v max_matches="$MAX_MATCHES" '
 
     BEGIN { 
         match_count = 0 
@@ -178,6 +141,11 @@ awk -v pattern="$SEARCH_PATTERN" \
     }
 
     /^>/ {
+        # Exit if we already have enough matches from PREVIOUS record
+        if (max_matches > 0 && match_count >= max_matches) {
+            exit
+        }
+
         # Reset print flag for new record
         print_record = 0
         
@@ -255,6 +223,8 @@ awk -v pattern="$SEARCH_PATTERN" \
         # 3. Invert
         if (invert) matched = !matched
 
+        max_matches_limit_reached = 0
+
         # 4. Output Logic
         if (matched) {
             match_count++
@@ -263,6 +233,10 @@ awk -v pattern="$SEARCH_PATTERN" \
                 # Just count, do nothing else
             } else if (names_only) {
                 print $0 
+                # Exit early if max matches reached 
+                if(max_matches > 0 && match_count >= max_matches) {
+                    exit
+                }
             } else {
                 print $0 
                 print_record = 1 
