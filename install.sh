@@ -3,7 +3,7 @@
 set -e
 
 # Default installation directory
-DEFAULT_INSTALL_DIR="$HOME/.scripts"
+DEFAULT_INSTALL_DIR="$HOME/.bioutils"
 INSTALL_DIR=""
 FORCE_INSTALL=false
 
@@ -24,14 +24,14 @@ Install bioinformatics scripts to a directory and add it to PATH.
 Usage: $(basename "$0") [OPTIONS] [install_directory]
 
 Options:
-  -f, --force          Force reinstall all scripts (ignore timestamps)
+  -f, --force          Force reinstall all bioutils scripts (ignore timestamps)
   -h, --help           Show this help message
 
 Arguments:
-  install_directory    Target directory (default: ~/.scripts)
+  install_directory    Target directory (default: ~/.bioutils)
 
 Examples:
-  $(basename "$0")                    # Install/update to ~/.scripts
+  $(basename "$0")                    # Install/update to ~/.bioutils
   $(basename "$0") ~/bin              # Install/update to ~/bin
   $(basename "$0") -f                 # Force reinstall everything
   $(basename "$0") -f ~/bin           # Force reinstall to ~/bin
@@ -223,17 +223,17 @@ configure_path() {
         if [ "$SHELL_NAME" = "fish" ]; then
             # Fish shell uses different syntax
             echo "" >> "$RC_FILE"
-            echo "# Added by scripts installer" >> "$RC_FILE"
+            echo "# Added by bioutils installer" >> "$RC_FILE"
             echo "set -gx PATH $INSTALL_DIR \$PATH" >> "$RC_FILE"
         else
             echo "" >> "$RC_FILE"
-            echo "# Added by scripts installer" >> "$RC_FILE"
+            echo "# Added by bioutils installer" >> "$RC_FILE"
             echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$RC_FILE"
         fi
         
         echo "  ✓ Updated $RC_FILE"
         echo
-        echo "  To use the scripts immediately, run:"
+        echo "  To use the bioutils immediately, run:"
         echo "    source $RC_FILE"
         echo "  Or simply open a new terminal."
     fi

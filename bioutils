@@ -11,12 +11,12 @@ Usage: $cmd <subcommand>
 
 Subcommands:
   help, -h, --help  Show this help message
-  list              List all available scripts in the scripts directory ($SCRIPT_DIR)
+  list              List all available scripts in the bioutils directory ($SCRIPT_DIR)
   info <name>       Show metadata about a script
   remove <name...>  Remove specified script(s) by name
-  update            Updates all and installs new scripts from the upstream repository
-  uninstall         Remove all scripts in the scripts directory
-  uninstall-all     Remove all scripts, the scripts directory itself and the directory from PATH
+  update            Updates all and installs new bioutils scripts from the upstream repository
+  uninstall         Remove all scripts in the bioutils directory
+  uninstall-all     Remove all scripts, the bioutils directory itself and the directory from PATH
 EOF
 }
 
@@ -73,7 +73,7 @@ remove_scripts() {
     done
 }
 
-update_scripts() {
+update_bioutils() {
     command -v git >/dev/null 2>&1 || {
         echo "git is required for update" >&2
         return 1
@@ -82,7 +82,7 @@ update_scripts() {
     tmpdir=$(mktemp -d) || return 1
     trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
-    echo "Updating scripts from upstream repository..."
+    echo "Updating bioutils from upstream repository..."
 
     git clone https://github.com/sverwimp/scripts.git "$tmpdir" || return 1
 
@@ -101,7 +101,7 @@ update_scripts() {
 }
 
 # Remove all scripts in the scripts directory
-uninstall_scripts() {
+uninstall_bioutils() {
     if [ ! -d "$SCRIPT_DIR" ]; then
         echo "Directory $SCRIPT_DIR does not exist" >&2
         return 1
@@ -120,7 +120,7 @@ uninstall_all() {
 
     cd / || return 1
     rm -rf -- "$SCRIPT_DIR"
-    echo "Uninstalled all scripts and removed directory $SCRIPT_DIR"
+    echo "Uninstalled all bioutils scripts and removed directory $SCRIPT_DIR"
 
     SHELL_NAME="$(basename "$SHELL")"
     case "$SHELL_NAME" in
@@ -142,7 +142,7 @@ uninstall_all() {
     # Remove PATH export added by installer
     if [ -f "$RC_FILE" ]; then
         # Delete the comment line and the following line (PATH export)
-        sed -i.bak '/# Added by scripts installer/{N;d;}' "$RC_FILE"
+        sed -i.bak '/# Added by bioutils installer/{N;d;}' "$RC_FILE"
         echo "Removed PATH modification from $RC_FILE (backup saved as $RC_FILE.bak)"
     fi
 
@@ -174,10 +174,10 @@ case "$cmd" in
         remove_scripts "$@"
         ;;
     update)
-        update_scripts
+        update_bioutils
         ;;
     uninstall)
-        uninstall_scripts
+        uninstall_bioutils
         ;;
     uninstall-all)
         uninstall_all

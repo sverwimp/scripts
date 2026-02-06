@@ -1,4 +1,4 @@
-# Scripts
+# Bioutils
 
 A personal collection of standalone, portable command-line utilities for bioinformatics and data analysis.
 
@@ -24,14 +24,14 @@ chmod +x install.sh
 ```
 
 This will:
-- Install all scripts to `~/.scripts` (or a custom directory of your choice)
+- Install all scripts to `~/.bioutils` (or a custom directory of your choice)
 - Make all scripts executable
 - Compile any C programs automatically (only if gcc and zlib are present)
 - Add the directory to your PATH
 
 **Custom installation directory:**
 ```bash
-./install.sh                    # Install to ~/.scripts
+./install.sh                    # Install to ~/.bioutils
 ./install.sh ~/bin              # Install to ~/bin
 ./install.sh /usr/local/bin     # System-wide (requires sudo)
 ```
@@ -44,11 +44,11 @@ Each script is self-contained. You can copy any single script directly and use i
 
 ## Management
 
-Once installed, use the `scripts` command to manage the collection of scripts.
+Once installed, use the `bioutils` command to manage the collection of scripts.
 
 ### Usage
 
-`scripts <subcommand>`
+`bioutils <subcommand>`
 
 | Subcommand         | Description                                                          |
 | ------------------ | -------------------------------------------------------------------- |
@@ -61,7 +61,7 @@ Once installed, use the `scripts` command to manage the collection of scripts.
 
 ### Updating
 
-Use the `scripts` update subcommand to automatically clone the repository to a temporary location, run the install script again (keeping current install directory in mind), and remove the local repository.
+Use the `bioutils` update subcommand to automatically clone the repository to a temporary location, run the install script again (keeping current install directory in mind), and remove the local repository.
 
 Or pull new changes manually and simply run the installer again:
 ```bash
