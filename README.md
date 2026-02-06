@@ -17,8 +17,8 @@ More information on each script given in the README file in each folder.
 Clone the repository and run the installer:
 
 ```bash
-git clone https://github.com/sverwimp/scripts.git
-cd scripts
+git clone https://github.com/sverwimp/portable-bioinformatics-scripts.git
+cd portable-bioinformatics-scripts
 chmod +x install.sh
 ./install.sh
 ```
@@ -32,7 +32,7 @@ This will:
 **Custom installation directory:**
 ```bash
 ./install.sh                    # Install to ~/.bioutils
-./install.sh ~/bin              # Install to ~/bin
+./install.sh ~/myscripts        # Install to ~/myscripts
 ./install.sh /usr/local/bin     # System-wide (requires sudo)
 ```
 
