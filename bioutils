@@ -84,7 +84,7 @@ update_bioutils() {
 
     echo "Updating bioutils from upstream repository..."
 
-    git clone https://github.com/sverwimp/scripts.git "$tmpdir" || return 1
+    git clone https://github.com/sverwimp/portable-bioinformatics-scripts.git "$tmpdir" || return 1
 
     if [ ! -x "$tmpdir/install.sh" ]; then
         echo "install.sh not found or not executable" >&2
