@@ -261,6 +261,7 @@ echo "Copying scripts..."
 
 install_basic_scripts
 compile_c_scripts
+configure_path
 
 TOTAL_COUNT=$((SCRIPT_COUNT + C_COUNT))
 TOTAL_UPDATED=$((UPDATED_COUNT + C_UPDATED))
